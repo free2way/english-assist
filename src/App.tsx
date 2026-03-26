@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { GoogleGenAI, Modality } from "@google/genai";
+import Markdown from 'react-markdown';
 import { 
   LayoutDashboard, 
   Mic2, 
@@ -36,7 +38,10 @@ import {
   Trash2,
   Save,
   School,
-  GraduationCap
+  GraduationCap,
+  PencilLine,
+  ChevronDown,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -78,31 +83,93 @@ const PIE_DATA = [
 ];
 
 const FLTRP_VOCAB = [
-  // 初二
-  { id: 'v1', word: 'Literature', phonetic: '/ˈlɪtrətʃə(r)/', definition: '文学；文学作品', example: 'She is a student of English literature.', mastered: false, grade: '初二' },
-  { id: 'v2', word: 'Culture', phonetic: '/ˈkʌltʃə(r)/', definition: '文化；文明', example: 'We should respect different cultures.', mastered: false, grade: '初二' },
-  { id: 'v3', word: 'Achievement', phonetic: '/əˈtʃiːvmənt/', definition: '成就；成绩', example: 'It was a remarkable achievement.', mastered: false, grade: '初二' },
-  { id: 'v4', word: 'Challenge', phonetic: '/ˈtʃælɪndʒ/', definition: '挑战；艰巨任务', example: 'He accepted the challenge with a smile.', mastered: false, grade: '初二' },
-  { id: 'v5', word: 'Opportunity', phonetic: '/ˌɒpəˈtjuːnəti/', definition: '机会；时机', example: 'Don\'t miss this opportunity.', mastered: false, grade: '初二' },
-  // 初一
-  { id: 'v6', word: 'Pencil', phonetic: '/ˈpensl/', definition: '铅笔', example: 'Can I borrow your pencil?', mastered: false, grade: '初一' },
-  { id: 'v7', word: 'Eraser', phonetic: '/ɪˈreɪzə(r)/', definition: '橡皮', example: 'I need an eraser.', mastered: false, grade: '初一' },
-  { id: 'v8', word: 'Classroom', phonetic: '/ˈklɑːsruːm/', definition: '教室', example: 'The classroom is clean.', mastered: false, grade: '初一' },
-  // 初三
-  { id: 'v9', word: 'Environment', phonetic: '/ɪnˈvaɪrənmənt/', definition: '环境', example: 'We must protect the environment.', mastered: false, grade: '初三' },
-  { id: 'v10', word: 'Pollution', phonetic: '/pəˈluːʃn/', definition: '污染', example: 'Air pollution is a serious problem.', mastered: false, grade: '初三' },
-  // 高一
-  { id: 'v11', word: 'Philosophy', phonetic: '/fəˈlɒsəfi/', definition: '哲学', example: 'He is studying Greek philosophy.', mastered: false, grade: '高一' },
-  { id: 'v12', word: 'Psychology', phonetic: '/saɪˈkɒlədʒi/', definition: '心理学', example: 'She has a degree in psychology.', mastered: false, grade: '高一' },
+  // 7年级上 (Grade 7 Semester 1)
+  { id: 'v7u1_1', word: 'Pencil', phonetic: '/ˈpensl/', definition: '铅笔', example: 'Can I borrow your pencil?', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v7u1_2', word: 'Eraser', phonetic: '/ɪˈreɪzə(r)/', definition: '橡皮', example: 'I need an eraser.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v7u2_1', word: 'Classroom', phonetic: '/ˈklɑːsruːm/', definition: '教室', example: 'The classroom is clean.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 'v7u2_2', word: 'Student', phonetic: '/ˈstjuːdnt/', definition: '学生', example: 'He is a good student.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 'v7u3_1', word: 'English', phonetic: '/ˈɪŋɡlɪʃ/', definition: '英语', example: 'I like English.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v7u3_2', word: 'Teacher', phonetic: '/ˈtiːtʃə(r)/', definition: '老师', example: 'My teacher is very kind.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v7u4_1', word: 'Family', phonetic: '/ˈfæməli/', definition: '家庭', example: 'I love my family.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 4' },
+  { id: 'v7u4_2', word: 'Father', phonetic: '/ˈfɑːðə(r)/', definition: '父亲', example: 'My father is a doctor.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 4' },
+  { id: 'v7u5_1', word: 'Friend', phonetic: '/frend/', definition: '朋友', example: 'He is my best friend.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 5' },
+  { id: 'v7u6_1', word: 'School', phonetic: '/skuːl/', definition: '学校', example: 'I go to school every day.', mastered: false, grade: '7年级', semester: '上学期', unit: 'Unit 6' },
+  
+  // 7年级下 (Grade 7 Semester 2)
+  { id: 'v7d1_1', word: 'Library', phonetic: '/ˈlaɪbrəri/', definition: '图书馆', example: 'I often go to the library.', mastered: false, grade: '7年级', semester: '下学期', unit: 'Unit 1' },
+  { id: 'v7d1_2', word: 'Subject', phonetic: '/ˈsʌbdʒɪkt/', definition: '科目；主题', example: 'What is your favorite subject?', mastered: false, grade: '7年级', semester: '下学期', unit: 'Unit 1' },
+  { id: 'v7d2_1', word: 'History', phonetic: '/ˈhɪstri/', definition: '历史', example: 'History is interesting.', mastered: false, grade: '7年级', semester: '下学期', unit: 'Unit 2' },
+
+  // 8年级上 (Grade 8 Semester 1)
+  { id: 'v8u1_1', word: 'Literature', phonetic: '/ˈlɪtrətʃə(r)/', definition: '文学；文学作品', example: 'She is a student of English literature.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v8u1_2', word: 'Culture', phonetic: '/ˈkʌltʃə(r)/', definition: '文化；文明', example: 'We should respect different cultures.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v8u2_1', word: 'Achievement', phonetic: '/əˈtʃiːvmənt/', definition: '成就；成绩', example: 'It was a remarkable achievement.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 'v8u3_1', word: 'Experience', phonetic: '/ɪkˈspɪəriəns/', definition: '经验；经历', example: 'He has a lot of experience.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v8u3_2', word: 'Journey', phonetic: '/ˈdʒɜːni/', definition: '旅行；旅程', example: 'The journey was long.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v8u4_1', word: 'Nature', phonetic: '/ˈneɪtʃə(r)/', definition: '自然', example: 'We should protect nature.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 4' },
+  { id: 'v8u5_1', word: 'Science', phonetic: '/ˈsaɪəns/', definition: '科学', example: 'Science is my favorite subject.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 5' },
+  { id: 'v8u6_1', word: 'Future', phonetic: '/ˈfjuːtʃə(r)/', definition: '未来', example: 'I am excited about the future.', mastered: false, grade: '8年级', semester: '上学期', unit: 'Unit 6' },
+  
+  // 8年级下 (Grade 8 Semester 2)
+  { id: 'v8d1_1', word: 'Challenge', phonetic: '/ˈtʃælɪndʒ/', definition: '挑战；艰巨任务', example: 'He accepted the challenge with a smile.', mastered: false, grade: '8年级', semester: '下学期', unit: 'Unit 1' },
+  { id: 'v8d1_2', word: 'Opportunity', phonetic: '/ˌɒpəˈtjuːnəti/', definition: '机会；时机', example: 'Don\'t miss this opportunity.', mastered: false, grade: '8年级', semester: '下学期', unit: 'Unit 1' },
+  { id: 'v8d2_1', word: 'Development', phonetic: '/dɪˈveləpmənt/', definition: '发展', example: 'The development of technology is fast.', mastered: false, grade: '8年级', semester: '下学期', unit: 'Unit 2' },
+
+  // 9年级上 (Grade 9 Semester 1)
+  { id: 'v9u1_1', word: 'Environment', phonetic: '/ɪnˈvaɪrənmənt/', definition: '环境', example: 'We must protect the environment.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v9u1_2', word: 'Pollution', phonetic: '/pəˈluːʃn/', definition: '污染', example: 'Air pollution is a serious problem.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v9u2_1', word: 'Resource', phonetic: '/rɪˈsɔːs/', definition: '资源', example: 'Water is a precious resource.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 2' },
+
+  // 10年级上 (Grade 10 Semester 1)
+  { id: 'v10u1_1', word: 'Philosophy', phonetic: '/fəˈlɒsəfi/', definition: '哲学', example: 'He is studying Greek philosophy.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v10u1_2', word: 'Psychology', phonetic: '/saɪˈkɒlədʒi/', definition: '心理学', example: 'She has a degree in psychology.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v10u2_1', word: 'Civilization', phonetic: '/ˌsɪvəlaɪˈzeɪʃn/', definition: '文明', example: 'Ancient civilizations are fascinating.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 2' },
+
+  // 11年级上 (Grade 11 Semester 1)
+  { id: 'v11u1_1', word: 'Technology', phonetic: '/tekˈnɒlədʒi/', definition: '技术；科技', example: 'Technology is changing our lives.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v11u2_1', word: 'Innovation', phonetic: '/ˌɪnəˈveɪʃn/', definition: '创新', example: 'Innovation is key to success.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 2' },
+  
+  // 12年级上 (Grade 12 Semester 1)
+  { id: 'v12u1_1', word: 'University', phonetic: '/ˌjuːnɪˈvɜːsəti/', definition: '大学', example: 'He wants to go to a top university.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 'v12u2_1', word: 'Graduation', phonetic: '/ˌɡrædʒuˈeɪʃn/', definition: '毕业', example: 'Graduation is a big milestone.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 2' },
 ];
 
-const GRADES = ['初一', '初二', '初三', '高一', '高二', '高三'];
+const MOCK_SENTENCES = [
+  // 7年级
+  { id: 's7u1', text: 'Practice makes perfect.', translation: '熟能生巧。', grade: '7年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 's7u2', text: 'The early bird catches the worm.', translation: '早起的鸟儿有虫吃。', grade: '7年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 's7d1', text: 'Where there is a will, there is a way.', translation: '有志者事竟成。', grade: '7年级', semester: '下学期', unit: 'Unit 1' },
+  
+  // 8年级
+  { id: 's8u1', text: 'Actions speak louder than words.', translation: '行动胜于言语。', grade: '8年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 's8u2', text: 'Knowledge is power.', translation: '知识就是力量。', grade: '8年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 's8d1', text: 'A journey of a thousand miles begins with a single step.', translation: '千里之行始于足下。', grade: '8年级', semester: '下学期', unit: 'Unit 1' },
+
+  // 9年级
+  { id: 's9u1', text: 'Honesty is the best policy.', translation: '诚实是上策。', grade: '9年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 's9u2', text: 'Better late than never.', translation: '亡羊补牢，未为晚也。', grade: '9年级', semester: '上学期', unit: 'Unit 2' },
+
+  // 10年级
+  { id: 's10u1', text: 'A friend in need is a friend indeed.', translation: '患难见真情。', grade: '10年级', semester: '上学期', unit: 'Unit 1' },
+  { id: 's10u2', text: 'Every cloud has a silver lining.', translation: '黑暗中总有一线光明。', grade: '10年级', semester: '上学期', unit: 'Unit 2' },
+
+  // 11年级
+  { id: 's11u1', text: 'Time and tide wait for no man.', translation: '岁月不待人。', grade: '11年级', semester: '上学期', unit: 'Unit 1' },
+  
+  // 12年级
+  { id: 's12u1', text: 'Failure is the mother of success.', translation: '失败是成功之母。', grade: '12年级', semester: '上学期', unit: 'Unit 1' },
+];
+
+const GRADES = ['7年级', '8年级', '9年级', '10年级', '11年级', '12年级'];
+const SEMESTERS = ['上学期', '下学期'];
+const UNITS = ['Unit 1', 'Unit 2', 'Unit 3', 'Unit 4', 'Unit 5', 'Unit 6'];
 
 interface AppUser {
   id: string;
   username: string;
   password: string;
   grade: string;
+  semester: string;
   school: string;
   role: 'admin' | 'user';
 }
@@ -349,82 +416,311 @@ const Statistics = () => (
   </div>
 );
 
-const AITutor = () => (
-  <div className="h-full flex flex-col pb-20">
-    <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-6">
-      <div className="flex items-center gap-4 mb-6">
-        <div className="w-16 h-16 rounded-2xl blue-gradient flex items-center justify-center text-white shadow-lg shadow-blue-200">
-          <Zap size={32} />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">AI 私人外教</h2>
-          <p className="text-sm text-slate-500">正在讨论：School Life & Hobbies</p>
-        </div>
-      </div>
+const AITutor = () => {
+  const [messages, setMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([
+    { role: 'ai', text: 'Hello! I am your AI English tutor. Today let\'s talk about your school life. What is your favorite subject and why?' }
+  ]);
+  const [inputValue, setInputValue] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState<number | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [accent, setAccent] = useState<'US' | 'UK'>('US');
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = accent === 'US' ? 'en-US' : 'en-GB';
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setInputValue(transcript);
+        setIsListening(false);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, [accent]);
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    } else {
+      try {
+        recognitionRef.current?.start();
+        setIsListening(true);
+      } catch (error) {
+        console.error('Failed to start recognition:', error);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const getAI = () => {
+    const savedConfig = localStorage.getItem('ace_ai_config');
+    const config = savedConfig ? JSON.parse(savedConfig) : DEFAULT_AI_CONFIG;
+    if (!config.apiKey) {
+      throw new Error('请先在系统管理中配置 API Key');
+    }
+    return new GoogleGenAI({ apiKey: config.apiKey });
+  };
+
+  const handleSend = async () => {
+    if (!inputValue.trim() || isLoading) return;
+
+    const userText = inputValue;
+    setInputValue('');
+    setMessages(prev => [...prev, { role: 'user', text: userText }]);
+    setIsLoading(true);
+
+    try {
+      const ai = getAI();
+      const savedConfig = localStorage.getItem('ace_ai_config');
+      const config = savedConfig ? JSON.parse(savedConfig) : DEFAULT_AI_CONFIG;
       
-      <div className="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
-        <div className="flex gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">AI</div>
-          <div className="bg-slate-50 p-4 rounded-2xl rounded-tl-none text-sm text-slate-700 max-w-[80%]">
-            Hello! Today let's talk about your school life. What is your favorite subject and why?
+      const response = await ai.models.generateContent({
+        model: config.model,
+        contents: [
+          { role: 'user', parts: [{ text: `You are a friendly and professional English tutor. Help the student practice English. Keep responses concise and encouraging. Student says: ${userText}` }] }
+        ],
+        config: {
+          systemInstruction: "You are a friendly English tutor. Correct the student's grammar if necessary, but keep the conversation flowing. Use simple but natural English suitable for middle/high school students."
+        }
+      });
+
+      const aiResponse = response.text || 'Sorry, I encountered an error.';
+      setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
+      
+      // Auto-speak the AI response
+      speakText(aiResponse, messages.length + 1);
+    } catch (error: any) {
+      setMessages(prev => [...prev, { role: 'ai', text: `Error: ${error.message || 'Something went wrong'}` }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const speakText = async (text: string, index: number) => {
+    if (isSpeaking !== null) return;
+    setIsSpeaking(index);
+
+    try {
+      const ai = getAI();
+      // US voices: Fenrir, Zephyr; UK voices: Puck, Charon, Kore
+      const voiceName = accent === 'US' ? 'Zephyr' : 'Puck';
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        // Gemini TTS returns raw PCM 16-bit at 24kHz
+        const binaryString = window.atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        const int16Buffer = new Int16Array(bytes.buffer);
+        const float32Buffer = new Float32Array(int16Buffer.length);
+        for (let i = 0; i < int16Buffer.length; i++) {
+          float32Buffer[i] = int16Buffer[i] / 32768.0;
+        }
+
+        const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+        const audioContext = new AudioContextClass();
+        const audioBuffer = audioContext.createBuffer(1, float32Buffer.length, 24000);
+        audioBuffer.getChannelData(0).set(float32Buffer);
+
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+        source.onended = () => {
+          setIsSpeaking(null);
+          audioContext.close();
+        };
+        source.start();
+      } else {
+        setIsSpeaking(null);
+      }
+    } catch (error) {
+      console.error('TTS Error:', error);
+      setIsSpeaking(null);
+      // Fallback to browser TTS if Gemini TTS fails
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = accent === 'US' ? 'en-US' : 'en-GB';
+      utterance.onend = () => setIsSpeaking(null);
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  return (
+    <div className="h-full flex flex-col pb-20">
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-6 flex-1 flex flex-col min-h-0">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-2xl blue-gradient flex items-center justify-center text-white shadow-lg shadow-blue-200">
+              <Zap size={32} />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-800">AI 私人外教</h2>
+              <p className="text-sm text-slate-500">正在讨论：School Life & Hobbies</p>
+            </div>
+          </div>
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button 
+              onClick={() => setAccent('US')}
+              className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", accent === 'US' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
+            >
+              美式 (US)
+            </button>
+            <button 
+              onClick={() => setAccent('UK')}
+              className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", accent === 'UK' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
+            >
+              英式 (UK)
+            </button>
           </div>
         </div>
         
-        <div className="flex gap-3 flex-row-reverse">
-          <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">我</div>
-          <div className="bg-blue-500 p-4 rounded-2xl rounded-tr-none text-sm text-white max-w-[80%] shadow-md shadow-blue-100">
-            I like English very much because it is interesting.
-          </div>
+        <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto custom-scrollbar pr-2 mb-6">
+          {messages.map((msg, idx) => (
+            <div key={idx} className={cn("flex gap-3", msg.role === 'user' ? "flex-row-reverse" : "")}>
+              <div className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 font-bold text-xs",
+                msg.role === 'ai' ? "bg-blue-100 text-blue-600" : "bg-emerald-100 text-emerald-600"
+              )}>
+                {msg.role === 'ai' ? 'AI' : '我'}
+              </div>
+              <div className="flex flex-col gap-1 max-w-[80%]">
+                <div className={cn(
+                  "p-4 rounded-2xl text-sm",
+                  msg.role === 'ai' 
+                    ? "bg-slate-50 rounded-tl-none text-slate-700" 
+                    : "bg-blue-500 rounded-tr-none text-white shadow-md shadow-blue-100"
+                )}>
+                  <div className="markdown-body">
+                    <Markdown>{msg.text}</Markdown>
+                  </div>
+                </div>
+                {msg.role === 'ai' && (
+                  <button 
+                    onClick={() => speakText(msg.text, idx)}
+                    className={cn(
+                      "flex items-center gap-1 text-[10px] font-bold transition-all",
+                      isSpeaking === idx ? "text-blue-500" : "text-slate-400 hover:text-blue-500"
+                    )}
+                  >
+                    {isSpeaking === idx ? <RotateCw size={10} className="animate-spin" /> : <Volume2 size={10} />}
+                    {isSpeaking === idx ? '正在播放...' : '播放音频'}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {isLoading && (
+            <div className="flex gap-3">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">AI</div>
+              <div className="bg-slate-50 p-4 rounded-2xl rounded-tl-none text-sm text-slate-400 flex items-center gap-2">
+                <RotateCw size={14} className="animate-spin" />
+                AI 正在思考中...
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="flex gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">AI</div>
-          <div className="bg-slate-50 p-4 rounded-2xl rounded-tl-none text-sm text-slate-700 max-w-[80%]">
-            That's great! English is a window to the world. Besides being "interesting", can you tell me more? For example, do you like the teacher or the stories in the books?
+        <div className="relative">
+          <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+            <button 
+              onClick={toggleListening}
+              className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center transition-all",
+                isListening ? "bg-red-500 text-white animate-pulse" : "bg-slate-100 text-slate-400 hover:bg-slate-200"
+              )}
+            >
+              <Mic2 size={18} />
+            </button>
           </div>
+          <input 
+            type="text" 
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSend()}
+            placeholder={isListening ? "正在倾听..." : "用英语和外教聊聊吧..."}
+            className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 pl-16 pr-14 text-sm outline-none focus:border-blue-500 transition-all"
+          />
+          <button 
+            onClick={handleSend}
+            disabled={!inputValue.trim() || isLoading}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-xl blue-gradient text-white flex items-center justify-center shadow-lg shadow-blue-100 disabled:opacity-50"
+          >
+            <Play size={18} />
+          </button>
         </div>
       </div>
-    </div>
 
-    {/* Scaffolding Tools */}
-    <div className="grid grid-cols-3 gap-3 mb-6">
-      <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-        <div className="text-[10px] text-slate-400 mb-1">关键词提示</div>
-        <div className="text-xs font-bold text-blue-600">Literature, Culture</div>
-      </button>
-      <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-        <div className="text-[10px] text-slate-400 mb-1">句式模板</div>
-        <div className="text-xs font-bold text-purple-600">Not only... but also</div>
-      </button>
-      <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
-        <div className="text-[10px] text-slate-400 mb-1">参考范文</div>
-        <div className="text-xs font-bold text-emerald-600">View Sample</div>
-      </button>
+      {/* Scaffolding Tools */}
+      <div className="grid grid-cols-3 gap-3">
+        <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all">
+          <div className="text-[10px] text-slate-400 mb-1">关键词提示</div>
+          <div className="text-xs font-bold text-blue-600">Literature, Culture</div>
+        </button>
+        <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all">
+          <div className="text-[10px] text-slate-400 mb-1">句式模板</div>
+          <div className="text-xs font-bold text-purple-600">Not only... but also</div>
+        </button>
+        <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all">
+          <div className="text-[10px] text-slate-400 mb-1">参考范文</div>
+          <div className="text-xs font-bold text-emerald-600">My School Life</div>
+        </button>
+      </div>
     </div>
-
-    {/* Input Area */}
-    <div className="mt-auto flex items-center gap-4">
-      <button className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all">
-        <Headphones size={24} />
-      </button>
-      <button className="flex-1 h-14 rounded-full blue-gradient flex items-center justify-center gap-2 text-white font-bold shadow-xl shadow-blue-200 active:scale-95 transition-all">
-        <Mic2 size={24} />
-        按住说话
-      </button>
-      <button className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all">
-        <Play size={24} />
-      </button>
-    </div>
-  </div>
-);
+  );
+};
 
 const VocabularyModule = () => {
-  const [selectedGrade, setSelectedGrade] = useState('初二');
+  const [selectedGrade, setSelectedGrade] = useState('7年级');
+  const [selectedSemester, setSelectedSemester] = useState('上学期');
+  const [selectedUnit, setSelectedUnit] = useState('Unit 1');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [masteredCount, setMasteredCount] = useState(0);
 
-  const filteredVocab = FLTRP_VOCAB.filter(v => v.grade === selectedGrade);
+  const filteredVocab = FLTRP_VOCAB.filter(v => 
+    v.grade === selectedGrade && 
+    v.semester === selectedSemester && 
+    v.unit === selectedUnit
+  );
   const currentWord = filteredVocab[currentIndex] || filteredVocab[0];
 
   const handleNext = (mastered: boolean) => {
@@ -437,6 +733,23 @@ const VocabularyModule = () => {
 
   const handleGradeChange = (grade: string) => {
     setSelectedGrade(grade);
+    setSelectedSemester('上学期');
+    setSelectedUnit('Unit 1');
+    setCurrentIndex(0);
+    setIsFlipped(false);
+    setMasteredCount(0);
+  };
+
+  const handleSemesterChange = (semester: string) => {
+    setSelectedSemester(semester);
+    setSelectedUnit('Unit 1');
+    setCurrentIndex(0);
+    setIsFlipped(false);
+    setMasteredCount(0);
+  };
+
+  const handleUnitChange = (unit: string) => {
+    setSelectedUnit(unit);
     setCurrentIndex(0);
     setIsFlipped(false);
     setMasteredCount(0);
@@ -444,35 +757,76 @@ const VocabularyModule = () => {
 
   return (
     <div className="h-full flex flex-col pb-20">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">单词背记</h2>
-          <p className="text-sm text-slate-500">外研社版 - {selectedGrade}</p>
+      <div className="flex flex-col mb-6 gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">单词背记</h2>
+            <p className="text-sm text-slate-500">外研社版 - {selectedGrade} {selectedSemester} {selectedUnit}</p>
+          </div>
+          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-blue-600 shrink-0">
+            已掌握: {masteredCount} / {filteredVocab.length}
+          </div>
         </div>
         
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 custom-scrollbar">
-          {GRADES.map(grade => (
-            <button
-              key={grade}
-              onClick={() => handleGradeChange(grade)}
-              className={cn(
-                "px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0",
-                selectedGrade === grade 
-                  ? "bg-blue-500 text-white shadow-md shadow-blue-100" 
-                  : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"
-              )}
-            >
-              {grade}
-            </button>
-          ))}
-        </div>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2 shrink-0">年级:</span>
+            {GRADES.map(grade => (
+              <button
+                key={grade}
+                onClick={() => handleGradeChange(grade)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0",
+                  selectedGrade === grade 
+                    ? "bg-blue-500 text-white shadow-md shadow-blue-100" 
+                    : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"
+                )}
+              >
+                {grade}
+              </button>
+            ))}
+          </div>
 
-        <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-blue-600 shrink-0">
-          已掌握: {masteredCount} / {filteredVocab.length}
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2 shrink-0">学期:</span>
+            {SEMESTERS.map(sem => (
+              <button
+                key={sem}
+                onClick={() => handleSemesterChange(sem)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0",
+                  selectedSemester === sem 
+                    ? "bg-emerald-500 text-white shadow-md shadow-emerald-100" 
+                    : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"
+                )}
+              >
+                {sem}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2 shrink-0">单元:</span>
+            {UNITS.map(unit => (
+              <button
+                key={unit}
+                onClick={() => handleUnitChange(unit)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0",
+                  selectedUnit === unit 
+                    ? "bg-purple-500 text-white shadow-md shadow-purple-100" 
+                    : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"
+                )}
+              >
+                {unit}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Flashcard */}
+
       <div className="flex-1 flex flex-col items-center justify-center perspective-1000">
         {filteredVocab.length > 0 ? (
           <motion.div 
@@ -538,6 +892,254 @@ const VocabularyModule = () => {
   );
 };
 
+const DictationModule = () => {
+  const [grade, setGrade] = useState('7年级');
+  const [semester, setSemester] = useState('上学期');
+  const [unit, setUnit] = useState('Unit 1');
+  const [mode, setMode] = useState<'word' | 'sentence'>('word');
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [userInput, setUserInput] = useState('');
+  const [showResult, setShowResult] = useState<'none' | 'correct' | 'wrong'>('none');
+  const [score, setScore] = useState({ correct: 0, total: 0 });
+
+  const currentData = mode === 'word' 
+    ? FLTRP_VOCAB.filter(v => v.grade === grade && v.semester === semester && v.unit === unit)
+    : MOCK_SENTENCES.filter(s => s.grade === grade && s.semester === semester && s.unit === unit);
+
+  const currentItem = currentData[currentIndex];
+
+  const handleSpeak = () => {
+    if (!currentItem) return;
+    const text = mode === 'word' ? (currentItem as any).word : (currentItem as any).text;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.8;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const checkAnswer = () => {
+    if (!currentItem) return;
+    const target = mode === 'word' ? (currentItem as any).word : (currentItem as any).text;
+    
+    // Simple normalization: trim and lower case for comparison
+    const normalizedInput = userInput.trim().toLowerCase().replace(/[.,!?;:]/g, '');
+    const normalizedTarget = target.trim().toLowerCase().replace(/[.,!?;:]/g, '');
+
+    if (normalizedInput === normalizedTarget) {
+      setShowResult('correct');
+      setScore(prev => ({ ...prev, correct: prev.correct + 1, total: prev.total + 1 }));
+    } else {
+      setShowResult('wrong');
+      setScore(prev => ({ ...prev, total: prev.total + 1 }));
+    }
+  };
+
+  const nextItem = () => {
+    setUserInput('');
+    setShowResult('none');
+    setCurrentIndex(prev => (prev + 1) % currentData.length);
+  };
+
+  const reset = () => {
+    setCurrentIndex(0);
+    setUserInput('');
+    setShowResult('none');
+    setScore({ correct: 0, total: 0 });
+  };
+
+  return (
+    <div className="h-full flex flex-col pb-20">
+      <div className="flex flex-col mb-6 gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">听写训练</h2>
+            <p className="text-sm text-slate-500">外研社版 - {grade} {semester} {unit}</p>
+          </div>
+        </div>
+        
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2 shrink-0">年级:</span>
+            {GRADES.map(g => (
+              <button
+                key={g}
+                onClick={() => { setGrade(g); setSemester('上学期'); setUnit('Unit 1'); reset(); }}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0",
+                  grade === g 
+                    ? "bg-blue-500 text-white shadow-md shadow-blue-100" 
+                    : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"
+                )}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2 shrink-0">学期:</span>
+            {SEMESTERS.map(s => (
+              <button
+                key={s}
+                onClick={() => { setSemester(s); setUnit('Unit 1'); reset(); }}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0",
+                  semester === s 
+                    ? "bg-emerald-500 text-white shadow-md shadow-emerald-100" 
+                    : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2 shrink-0">单元:</span>
+            {UNITS.map(u => (
+              <button
+                key={u}
+                onClick={() => { setUnit(u); reset(); }}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-bold transition-all shrink-0",
+                  unit === u 
+                    ? "bg-purple-500 text-white shadow-md shadow-purple-100" 
+                    : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"
+                )}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-6">
+        <div className="flex gap-2 mb-6">
+          <button 
+            onClick={() => { setMode('word'); reset(); }}
+            className={cn(
+              "flex-1 py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2",
+              mode === 'word' ? "bg-blue-500 text-white shadow-lg shadow-blue-100" : "bg-slate-50 text-slate-500"
+            )}
+          >
+            <BookOpen size={18} />
+            单词听写
+          </button>
+          <button 
+            onClick={() => { setMode('sentence'); reset(); }}
+            className={cn(
+              "flex-1 py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2",
+              mode === 'sentence' ? "bg-purple-500 text-white shadow-lg shadow-purple-100" : "bg-slate-50 text-slate-500"
+            )}
+          >
+            <PencilLine size={18} />
+            句子听写
+          </button>
+        </div>
+
+        {currentData.length > 0 ? (
+          <div className="space-y-8 py-4">
+            <div className="flex flex-col items-center gap-6">
+              <button 
+                onClick={handleSpeak}
+                className="w-24 h-24 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-inner"
+              >
+                <Volume2 size={48} />
+              </button>
+              <div className="text-center">
+                <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">点击图标播放音频</p>
+                <p className="text-slate-800 font-bold">{mode === 'word' ? '拼写该单词' : '写下你听到的句子'}</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="relative">
+                <textarea 
+                  value={userInput}
+                  onChange={e => setUserInput(e.target.value)}
+                  disabled={showResult !== 'none'}
+                  className={cn(
+                    "w-full bg-slate-50 border rounded-2xl p-6 text-center text-lg font-bold outline-none transition-all resize-none h-32",
+                    showResult === 'correct' ? "border-emerald-500 bg-emerald-50 text-emerald-700" :
+                    showResult === 'wrong' ? "border-red-500 bg-red-50 text-red-700" :
+                    "border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5"
+                  )}
+                  placeholder={mode === 'word' ? "Type the word here..." : "Type the sentence here..."}
+                />
+                <AnimatePresence>
+                  {showResult !== 'none' && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.5 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="absolute -top-4 -right-4 w-12 h-12 rounded-full flex items-center justify-center shadow-lg"
+                    >
+                      {showResult === 'correct' ? (
+                        <div className="bg-emerald-500 text-white w-full h-full rounded-full flex items-center justify-center"><Check size={24} /></div>
+                      ) : (
+                        <div className="bg-red-500 text-white w-full h-full rounded-full flex items-center justify-center"><X size={24} /></div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {showResult === 'wrong' && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-4 bg-red-50 rounded-2xl border border-red-100 flex items-start gap-3"
+                >
+                  <AlertCircle className="text-red-500 shrink-0" size={18} />
+                  <div>
+                    <p className="text-xs font-bold text-red-800 mb-1">正确答案：</p>
+                    <p className="text-sm text-red-700 font-mono">{mode === 'word' ? (currentItem as any).word : (currentItem as any).text}</p>
+                    {mode === 'sentence' && <p className="text-[10px] text-red-500 mt-1">{(currentItem as any).translation}</p>}
+                  </div>
+                </motion.div>
+              )}
+
+              {showResult === 'none' ? (
+                <button 
+                  onClick={checkAnswer}
+                  disabled={!userInput.trim()}
+                  className="w-full blue-gradient py-4 rounded-2xl text-white font-bold shadow-xl shadow-blue-200 active:scale-95 transition-all disabled:opacity-50 disabled:grayscale"
+                >
+                  检查答案
+                </button>
+              ) : (
+                <button 
+                  onClick={nextItem}
+                  className="w-full bg-slate-800 py-4 rounded-2xl text-white font-bold shadow-xl shadow-slate-200 active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  下一题
+                  <ChevronRight size={18} />
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="py-20 text-center text-slate-300">
+            <BookOpen size={48} className="mx-auto mb-4 opacity-20" />
+            <p>该年级暂无{mode === 'word' ? '单词' : '句子'}听写数据</p>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
+          <div className="text-xs text-slate-400">当前进度</div>
+          <div className="font-bold text-slate-700">{currentIndex + 1} / {currentData.length}</div>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
+          <div className="text-xs text-slate-400">正确率</div>
+          <div className="font-bold text-emerald-500">{score.total > 0 ? Math.round((score.correct / score.total) * 100) : 0}%</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ManagementModule = () => {
   const [users, setUsers] = useState<AppUser[]>(() => {
     const saved = localStorage.getItem('ace_users');
@@ -552,7 +1154,8 @@ const ManagementModule = () => {
   const [newUser, setNewUser] = useState({
     username: '',
     password: '',
-    grade: '初一',
+    grade: '7年级',
+    semester: '上学期',
     school: ''
   });
 
@@ -571,7 +1174,7 @@ const ManagementModule = () => {
     const updatedUsers = [...users, user];
     setUsers(updatedUsers);
     localStorage.setItem('ace_users', JSON.stringify(updatedUsers));
-    setNewUser({ username: '', password: '', grade: '初一', school: '' });
+    setNewUser({ username: '', password: '', grade: '7年级', semester: '上学期', school: '' });
   };
 
   const handleDeleteUser = (id: string) => {
@@ -632,7 +1235,7 @@ const ManagementModule = () => {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">年级</label>
                   <select 
@@ -641,6 +1244,16 @@ const ManagementModule = () => {
                     className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 transition-all"
                   >
                     {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">学期</label>
+                  <select 
+                    value={newUser.semester}
+                    onChange={e => setNewUser({...newUser, semester: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 transition-all"
+                  >
+                    {SEMESTERS.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -684,7 +1297,7 @@ const ManagementModule = () => {
                       <div>
                         <div className="font-bold text-slate-800 text-sm">{user.username}</div>
                         <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                          <span className="flex items-center gap-0.5"><GraduationCap size={10} /> {user.grade}</span>
+                          <span className="flex items-center gap-0.5"><GraduationCap size={10} /> {user.grade} · {user.semester}</span>
                           <span className="flex items-center gap-0.5"><School size={10} /> {user.school}</span>
                         </div>
                       </div>
@@ -814,7 +1427,7 @@ const Login = ({ onLogin }: { onLogin: (user: any) => void }) => {
     
     // Check default admin
     if (trimmedUsername.toLowerCase() === 'admin' && trimmedPassword === 'admin1234') {
-      onLogin({ username: 'admin', role: 'admin', grade: '管理员', school: '系统' });
+      onLogin({ username: 'admin', role: 'admin', grade: '管理员', semester: '全学期', school: '系统' });
       return;
     }
 
@@ -920,6 +1533,7 @@ export default function App() {
   const navItems = [
     { id: 'dashboard', label: '首页', icon: LayoutDashboard },
     { id: 'vocab', label: '单词', icon: BookOpen },
+    { id: 'dictation', label: '听写', icon: PencilLine },
     { id: 'tutor', label: 'AI外教', icon: Mic2, primary: true },
     { id: 'stats', label: '统计', icon: BarChart3 },
     { id: 'profile', label: '我的', icon: Settings },
@@ -969,7 +1583,7 @@ export default function App() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-slate-800 truncate">{currentUser.username}</p>
-                <p className="text-[10px] text-slate-400">{currentUser.school} · {currentUser.grade}</p>
+                <p className="text-[10px] text-slate-400">{currentUser.school} · {currentUser.grade} {currentUser.semester}</p>
               </div>
             </div>
             <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
@@ -1029,6 +1643,7 @@ export default function App() {
             >
               {activeTab === 'dashboard' && <Dashboard />}
               {activeTab === 'vocab' && <VocabularyModule />}
+              {activeTab === 'dictation' && <DictationModule />}
               {activeTab === 'tutor' && <AITutor />}
               {activeTab === 'stats' && <Statistics />}
               {activeTab === 'manage' && <ManagementModule />}
