@@ -25,7 +25,18 @@ import {
   Check,
   X,
   RotateCw,
-  Volume2
+  Volume2,
+  Lock,
+  User,
+  Eye,
+  EyeOff,
+  LogOut,
+  ShieldCheck,
+  Plus,
+  Trash2,
+  Save,
+  School,
+  GraduationCap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -86,6 +97,25 @@ const FLTRP_VOCAB = [
 ];
 
 const GRADES = ['初一', '初二', '初三', '高一', '高二', '高三'];
+
+interface AppUser {
+  id: string;
+  username: string;
+  password: string;
+  grade: string;
+  school: string;
+  role: 'admin' | 'user';
+}
+
+interface AIConfig {
+  model: string;
+  apiKey: string;
+}
+
+const DEFAULT_AI_CONFIG: AIConfig = {
+  model: 'gemini-3-flash-preview',
+  apiKey: ''
+};
 
 // --- Components ---
 
@@ -508,9 +538,383 @@ const VocabularyModule = () => {
   );
 };
 
+const ManagementModule = () => {
+  const [users, setUsers] = useState<AppUser[]>(() => {
+    const saved = localStorage.getItem('ace_users');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
+    const saved = localStorage.getItem('ace_ai_config');
+    return saved ? JSON.parse(saved) : DEFAULT_AI_CONFIG;
+  });
+
+  const [newUser, setNewUser] = useState({
+    username: '',
+    password: '',
+    grade: '初一',
+    school: ''
+  });
+
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
+
+  const handleAddUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUser.username || !newUser.password) return;
+
+    const user: AppUser = {
+      id: Date.now().toString(),
+      ...newUser,
+      role: 'user'
+    };
+
+    const updatedUsers = [...users, user];
+    setUsers(updatedUsers);
+    localStorage.setItem('ace_users', JSON.stringify(updatedUsers));
+    setNewUser({ username: '', password: '', grade: '初一', school: '' });
+  };
+
+  const handleDeleteUser = (id: string) => {
+    const updatedUsers = users.filter(u => u.id !== id);
+    setUsers(updatedUsers);
+    localStorage.setItem('ace_users', JSON.stringify(updatedUsers));
+  };
+
+  const handleSaveAIConfig = () => {
+    setSaveStatus('saving');
+    localStorage.setItem('ace_ai_config', JSON.stringify(aiConfig));
+    setTimeout(() => {
+      setSaveStatus('success');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    }, 500);
+  };
+
+  return (
+    <div className="space-y-8 pb-20">
+      <div className="flex items-center gap-3 mb-2">
+        <div className="w-10 h-10 rounded-xl bg-blue-500 text-white flex items-center justify-center shadow-lg shadow-blue-100">
+          <ShieldCheck size={24} />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">系统管理</h2>
+          <p className="text-sm text-slate-500">管理用户账号与 AI 配置</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* User Management */}
+        <div className="space-y-6">
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+            <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
+              <Plus size={18} className="text-blue-500" />
+              新增用户
+            </h3>
+            <form onSubmit={handleAddUser} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">用户名</label>
+                  <input 
+                    type="text" 
+                    value={newUser.username}
+                    onChange={e => setNewUser({...newUser, username: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 transition-all"
+                    placeholder="请输入用户名"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">密码</label>
+                  <input 
+                    type="password" 
+                    value={newUser.password}
+                    onChange={e => setNewUser({...newUser, password: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 transition-all"
+                    placeholder="设置初始密码"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">年级</label>
+                  <select 
+                    value={newUser.grade}
+                    onChange={e => setNewUser({...newUser, grade: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 transition-all"
+                  >
+                    {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">学校</label>
+                  <input 
+                    type="text" 
+                    value={newUser.school}
+                    onChange={e => setNewUser({...newUser, school: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 transition-all"
+                    placeholder="请输入学校名称"
+                  />
+                </div>
+              </div>
+              <button 
+                type="submit"
+                className="w-full bg-blue-500 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-100 hover:scale-[1.02] active:scale-95 transition-all"
+              >
+                添加新用户
+              </button>
+            </form>
+          </div>
+
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+            <h3 className="font-bold text-slate-800 mb-6 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <User size={18} className="text-blue-500" />
+                用户列表
+              </span>
+              <span className="text-xs text-slate-400 font-normal">共 {users.length} 名用户</span>
+            </h3>
+            <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+              {users.length === 0 ? (
+                <div className="text-center py-10 text-slate-300 italic text-sm">暂无普通用户</div>
+              ) : (
+                users.map(user => (
+                  <div key={user.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-500 shadow-sm">
+                        <User size={20} />
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-800 text-sm">{user.username}</div>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                          <span className="flex items-center gap-0.5"><GraduationCap size={10} /> {user.grade}</span>
+                          <span className="flex items-center gap-0.5"><School size={10} /> {user.school}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handleDeleteUser(user.id)}
+                      className="p-2 text-slate-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* AI Configuration */}
+        <div className="space-y-6">
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+            <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
+              <Zap size={18} className="text-purple-500" />
+              AI 模型配置
+            </h3>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 ml-2">选择模型</label>
+                <div className="grid grid-cols-1 gap-3">
+                  {[
+                    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (推荐)', desc: '低延迟，高效率' },
+                    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '更强的逻辑推理能力' },
+                    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', desc: '极速响应' }
+                  ].map(model => (
+                    <button
+                      key={model.id}
+                      onClick={() => setAiConfig({...aiConfig, model: model.id})}
+                      className={cn(
+                        "flex items-center justify-between p-4 rounded-2xl border transition-all text-left",
+                        aiConfig.model === model.id 
+                          ? "bg-purple-50 border-purple-200 ring-4 ring-purple-500/5" 
+                          : "bg-slate-50 border-slate-100 hover:border-slate-200"
+                      )}
+                    >
+                      <div>
+                        <div className={cn("font-bold text-sm", aiConfig.model === model.id ? "text-purple-700" : "text-slate-700")}>
+                          {model.name}
+                        </div>
+                        <div className="text-[10px] text-slate-400">{model.desc}</div>
+                      </div>
+                      {aiConfig.model === model.id && <Check size={18} className="text-purple-500" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 ml-2">API Key</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                  <input 
+                    type="password" 
+                    value={aiConfig.apiKey}
+                    onChange={e => setAiConfig({...aiConfig, apiKey: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 pl-12 pr-4 text-sm outline-none focus:border-purple-500 transition-all"
+                    placeholder="请输入您的 Gemini API Key"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 ml-2">
+                  * API Key 将仅保存在本地浏览器中
+                </p>
+              </div>
+
+              <button 
+                onClick={handleSaveAIConfig}
+                disabled={saveStatus !== 'idle'}
+                className={cn(
+                  "w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all",
+                  saveStatus === 'success' 
+                    ? "bg-emerald-500 text-white" 
+                    : "bg-purple-600 text-white shadow-lg shadow-purple-100 hover:scale-[1.02] active:scale-95"
+                )}
+              >
+                {saveStatus === 'saving' ? (
+                  <RotateCw size={18} className="animate-spin" />
+                ) : saveStatus === 'success' ? (
+                  <>
+                    <Check size={18} />
+                    配置已保存
+                  </>
+                ) : (
+                  <>
+                    <Save size={18} />
+                    保存 AI 配置
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-orange-50 rounded-3xl p-6 border border-orange-100">
+            <h4 className="text-orange-800 font-bold text-sm mb-2 flex items-center gap-2">
+              <Bell size={16} />
+              管理提示
+            </h4>
+            <ul className="text-xs text-orange-700 space-y-2 opacity-80">
+              <li>• 新增用户后，他们可以使用设置的密码登录。</li>
+              <li>• AI 模型配置将影响全站的对话与辅导功能。</li>
+              <li>• 默认管理员账号 (admin) 无法在此处删除。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Login = ({ onLogin }: { onLogin: (user: any) => void }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedUsername = username.trim();
+    const trimmedPassword = password.trim();
+    
+    // Check default admin
+    if (trimmedUsername.toLowerCase() === 'admin' && trimmedPassword === 'admin1234') {
+      onLogin({ username: 'admin', role: 'admin', grade: '管理员', school: '系统' });
+      return;
+    }
+
+    // Check custom users
+    const savedUsers = localStorage.getItem('ace_users');
+    if (savedUsers) {
+      const users: AppUser[] = JSON.parse(savedUsers);
+      const foundUser = users.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase() && u.password === trimmedPassword);
+      if (foundUser) {
+        onLogin(foundUser);
+        return;
+      }
+    }
+
+    setError('用户名或密码错误');
+  };
+
+  return (
+    <div className="min-h-screen bg-bg-main flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl shadow-blue-500/10 p-10 border border-slate-100"
+      >
+        <div className="text-center mb-10">
+          <div className="w-20 h-20 rounded-3xl blue-gradient flex items-center justify-center text-white shadow-xl shadow-blue-200 mx-auto mb-6">
+            <Zap size={40} />
+          </div>
+          <h1 className="text-3xl font-black text-slate-800 tracking-tight mb-2">AceEnglish</h1>
+          <p className="text-slate-400 text-sm">请输入管理员账号登录</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 ml-4 uppercase tracking-wider">用户名</label>
+            <div className="relative">
+              <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={20} />
+              <input 
+                type="text" 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="admin"
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 ml-4 uppercase tracking-wider">密码</label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={20} />
+              <input 
+                type={showPassword ? "text" : "password"} 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 pl-12 pr-12 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all"
+              />
+              <button 
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500"
+              >
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <motion.p 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-red-500 text-xs font-bold text-center"
+            >
+              {error}
+            </motion.p>
+          )}
+
+          <button 
+            type="submit"
+            className="w-full blue-gradient py-4 rounded-2xl text-white font-black shadow-xl shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all mt-4"
+          >
+            登录系统
+          </button>
+        </form>
+
+        <div className="mt-10 text-center">
+          <p className="text-[10px] text-slate-300 uppercase tracking-widest font-bold">
+            AceEnglish Management System v1.0
+          </p>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
 
   const navItems = [
@@ -520,6 +924,15 @@ export default function App() {
     { id: 'stats', label: '统计', icon: BarChart3 },
     { id: 'profile', label: '我的', icon: Settings },
   ];
+
+  // Add management tab for admin
+  const displayNavItems = currentUser?.role === 'admin' 
+    ? [...navItems, { id: 'manage', label: '管理', icon: ShieldCheck }]
+    : navItems;
+
+  if (!currentUser) {
+    return <Login onLogin={(user) => setCurrentUser(user)} />;
+  }
 
   return (
     <div className="min-h-screen bg-bg-main flex flex-col md:flex-row font-sans">
@@ -531,7 +944,7 @@ export default function App() {
         </div>
 
         <nav className="flex-1 space-y-2">
-          {navItems.map((item) => (
+          {displayNavItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
@@ -548,19 +961,29 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="mt-auto p-4 bg-slate-50 rounded-2xl">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-blue-100 overflow-hidden">
-              <img src="https://picsum.photos/seed/user/100/100" alt="Avatar" referrerPolicy="no-referrer" />
+        <div className="mt-auto space-y-4">
+          <div className="p-4 bg-slate-50 rounded-2xl">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-blue-100 overflow-hidden">
+                <img src="https://picsum.photos/seed/user/100/100" alt="Avatar" referrerPolicy="no-referrer" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-800 truncate">{currentUser.username}</p>
+                <p className="text-[10px] text-slate-400">{currentUser.school} · {currentUser.grade}</p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-800 truncate">Owen</p>
-              <p className="text-[10px] text-slate-400">Level: Expert</p>
+            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 w-3/4" />
             </div>
           </div>
-          <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-500 w-3/4" />
-          </div>
+          
+          <button 
+            onClick={() => setCurrentUser(null)}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl font-bold text-red-400 hover:bg-red-50 transition-all"
+          >
+            <LogOut size={20} />
+            <span className="text-sm">退出登录</span>
+          </button>
         </div>
       </aside>
 
@@ -576,7 +999,7 @@ export default function App() {
               <span>学习中心</span>
               <ChevronRight size={14} />
               <span className="text-slate-800 font-bold">
-                {navItems.find(i => i.id === activeTab)?.label}
+                {displayNavItems.find(i => i.id === activeTab)?.label}
               </span>
             </div>
           </div>
@@ -608,10 +1031,11 @@ export default function App() {
               {activeTab === 'vocab' && <VocabularyModule />}
               {activeTab === 'tutor' && <AITutor />}
               {activeTab === 'stats' && <Statistics />}
+              {activeTab === 'manage' && <ManagementModule />}
               {(activeTab === 'exam' || activeTab === 'profile') && (
                 <div className="flex flex-col items-center justify-center h-[60vh] text-slate-400">
                   <Mic2 size={64} className="mb-4 opacity-20" />
-                  <p className="font-bold">{navItems.find(i => i.id === activeTab)?.label}模块开发中</p>
+                  <p className="font-bold">{displayNavItems.find(i => i.id === activeTab)?.label}模块开发中</p>
                   <p className="text-xs">即将上线，敬请期待</p>
                 </div>
               )}
@@ -622,7 +1046,7 @@ export default function App() {
 
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t border-slate-100 px-6 py-3 flex justify-between items-center z-50">
-        {navItems.map((item) => (
+        {displayNavItems.map((item) => (
           item.primary ? (
             <div key={item.id} className="relative -top-6">
               <button 
