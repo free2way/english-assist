@@ -1,0 +1,7 @@
+{
+  "name": "AceEnglish - 英语听说提分管家",
+  "description": "针对初高中生的英语听说辅导应用，结合中高考模考与AI私人外教，助力应试提分与能力进阶。",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
