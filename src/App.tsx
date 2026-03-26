@@ -119,19 +119,35 @@ const FLTRP_VOCAB = [
   { id: 'v9u1_1', word: 'Environment', phonetic: '/ɪnˈvaɪrənmənt/', definition: '环境', example: 'We must protect the environment.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 1' },
   { id: 'v9u1_2', word: 'Pollution', phonetic: '/pəˈluːʃn/', definition: '污染', example: 'Air pollution is a serious problem.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 1' },
   { id: 'v9u2_1', word: 'Resource', phonetic: '/rɪˈsɔːs/', definition: '资源', example: 'Water is a precious resource.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 'v9u3_1', word: 'Energy', phonetic: '/ˈenədʒi/', definition: '能量；能源', example: 'Solar energy is clean.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v9u4_1', word: 'Technology', phonetic: '/tekˈnɒlədʒi/', definition: '技术', example: 'New technology is everywhere.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 4' },
+  { id: 'v9u5_1', word: 'Space', phonetic: '/speɪs/', definition: '空间；太空', example: 'Space exploration is exciting.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 5' },
+  { id: 'v9u6_1', word: 'Universe', phonetic: '/ˈjuːnɪvɜːs/', definition: '宇宙', example: 'The universe is vast.', mastered: false, grade: '9年级', semester: '上学期', unit: 'Unit 6' },
 
   // 10年级上 (Grade 10 Semester 1)
   { id: 'v10u1_1', word: 'Philosophy', phonetic: '/fəˈlɒsəfi/', definition: '哲学', example: 'He is studying Greek philosophy.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 1' },
   { id: 'v10u1_2', word: 'Psychology', phonetic: '/saɪˈkɒlədʒi/', definition: '心理学', example: 'She has a degree in psychology.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 1' },
   { id: 'v10u2_1', word: 'Civilization', phonetic: '/ˌsɪvəlaɪˈzeɪʃn/', definition: '文明', example: 'Ancient civilizations are fascinating.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 'v10u3_1', word: 'Literature', phonetic: '/ˈlɪtrətʃə(r)/', definition: '文学', example: 'I love classical literature.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v10u4_1', word: 'Architecture', phonetic: '/ˈɑːkɪtektʃə(r)/', definition: '建筑', example: 'The architecture is beautiful.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 4' },
+  { id: 'v10u5_1', word: 'Economy', phonetic: '/ɪˈkɒnəmi/', definition: '经济', example: 'The global economy is complex.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 5' },
+  { id: 'v10u6_1', word: 'Politics', phonetic: '/ˈpɒlətɪks/', definition: '政治', example: 'He is interested in politics.', mastered: false, grade: '10年级', semester: '上学期', unit: 'Unit 6' },
 
   // 11年级上 (Grade 11 Semester 1)
   { id: 'v11u1_1', word: 'Technology', phonetic: '/tekˈnɒlədʒi/', definition: '技术；科技', example: 'Technology is changing our lives.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 1' },
   { id: 'v11u2_1', word: 'Innovation', phonetic: '/ˌɪnəˈveɪʃn/', definition: '创新', example: 'Innovation is key to success.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 2' },
-  
+  { id: 'v11u3_1', word: 'Communication', phonetic: '/kəˌmjuːnɪˈkeɪʃn/', definition: '沟通', example: 'Communication is vital.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v11u4_1', word: 'Globalization', phonetic: '/ˌɡləʊbəlaɪˈzeɪʃn/', definition: '全球化', example: 'Globalization has many effects.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 4' },
+  { id: 'v11u5_1', word: 'Sustainability', phonetic: '/səˌsteɪnəˈbɪləti/', definition: '可持续性', example: 'Sustainability is a goal.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 5' },
+  { id: 'v11u6_1', word: 'Diversity', phonetic: '/daɪˈvɜːsəti/', definition: '多样性', example: 'Cultural diversity is rich.', mastered: false, grade: '11年级', semester: '上学期', unit: 'Unit 6' },
+
   // 12年级上 (Grade 12 Semester 1)
   { id: 'v12u1_1', word: 'University', phonetic: '/ˌjuːnɪˈvɜːsəti/', definition: '大学', example: 'He wants to go to a top university.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 1' },
   { id: 'v12u2_1', word: 'Graduation', phonetic: '/ˌɡrædʒuˈeɪʃn/', definition: '毕业', example: 'Graduation is a big milestone.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 2' },
+  { id: 'v12u3_1', word: 'Career', phonetic: '/kəˈrɪə(r)/', definition: '职业', example: 'She is planning her career.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 3' },
+  { id: 'v12u4_1', word: 'Ambition', phonetic: '/æmˈbɪʃn/', definition: '雄心；抱负', example: 'He has high ambitions.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 4' },
+  { id: 'v12u5_1', word: 'Leadership', phonetic: '/ˈliːdəʃɪp/', definition: '领导力', example: 'Leadership is a skill.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 5' },
+  { id: 'v12u6_1', word: 'Responsibility', phonetic: '/rɪˌspɒnsəˈbɪləti/', definition: '责任', example: 'With power comes responsibility.', mastered: false, grade: '12年级', semester: '上学期', unit: 'Unit 6' },
 ];
 
 const MOCK_SENTENCES = [
@@ -175,13 +191,17 @@ interface AppUser {
 }
 
 interface AIConfig {
+  provider: 'gemini' | 'openai';
   model: string;
   apiKey: string;
+  baseURL?: string;
 }
 
 const DEFAULT_AI_CONFIG: AIConfig = {
+  provider: 'gemini',
   model: 'gemini-3-flash-preview',
-  apiKey: ''
+  apiKey: '',
+  baseURL: 'https://api.openai.com/v1'
 };
 
 // --- Components ---
@@ -416,6 +436,138 @@ const Statistics = () => (
   </div>
 );
 
+const getAIConfig = (): AIConfig => {
+  const savedConfig = localStorage.getItem('ace_ai_config');
+  return savedConfig ? JSON.parse(savedConfig) : DEFAULT_AI_CONFIG;
+};
+
+const generateChatResponse = async (userText: string): Promise<string> => {
+  const config = getAIConfig();
+  if (!config.apiKey) throw new Error('请先在系统管理中配置 API Key');
+
+  if (config.provider === 'openai') {
+    const response = await fetch(`${config.baseURL || 'https://api.openai.com/v1'}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: "You are a friendly English tutor. Correct the student's grammar if necessary, but keep the conversation flowing. Use simple but natural English suitable for middle/high school students." },
+          { role: 'user', content: `You are a friendly and professional English tutor. Help the student practice English. Keep responses concise and encouraging. Student says: ${userText}` }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || 'Failed to fetch OpenAI response');
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } else {
+    const ai = new GoogleGenAI({ apiKey: config.apiKey });
+    const response = await ai.models.generateContent({
+      model: config.model,
+      contents: [
+        { role: 'user', parts: [{ text: `You are a friendly and professional English tutor. Help the student practice English. Keep responses concise and encouraging. Student says: ${userText}` }] }
+      ],
+      config: {
+        systemInstruction: "You are a friendly English tutor. Correct the student's grammar if necessary, but keep the conversation flowing. Use simple but natural English suitable for middle/high school students."
+      }
+    });
+    return response.text || 'Sorry, I encountered an error.';
+  }
+};
+
+const generateTTS = async (text: string, accent: 'US' | 'UK'): Promise<void> => {
+  const config = getAIConfig();
+  if (!config.apiKey) throw new Error('No API Key');
+
+  if (config.provider === 'openai') {
+    const voice = accent === 'US' ? 'alloy' : 'onyx';
+    const response = await fetch(`${config.baseURL || 'https://api.openai.com/v1'}/audio/speech`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        input: text,
+        voice: voice
+      })
+    });
+
+    if (!response.ok) throw new Error('OpenAI TTS failed');
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    
+    return new Promise((resolve, reject) => {
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      audio.onerror = reject;
+      audio.play();
+    });
+  } else {
+    const ai = new GoogleGenAI({ apiKey: config.apiKey });
+    const voiceName = accent === 'US' ? 'Zephyr' : 'Puck';
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName },
+          },
+        },
+      },
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) throw new Error('No audio data');
+
+    const binaryString = window.atob(base64Audio);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    const int16Buffer = new Int16Array(bytes.buffer);
+    const float32Buffer = new Float32Array(int16Buffer.length);
+    for (let i = 0; i < int16Buffer.length; i++) {
+      float32Buffer[i] = int16Buffer[i] / 32768.0;
+    }
+
+    const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+    const audioContext = new AudioContextClass();
+    const audioBuffer = audioContext.createBuffer(1, float32Buffer.length, 24000);
+    audioBuffer.getChannelData(0).set(float32Buffer);
+
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext.destination);
+    
+    return new Promise((resolve) => {
+      source.onended = () => {
+        audioContext.close();
+        resolve();
+      };
+      source.start();
+    });
+  }
+};
+
 const AITutor = () => {
   const [messages, setMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([
     { role: 'ai', text: 'Hello! I am your AI English tutor. Today let\'s talk about your school life. What is your favorite subject and why?' }
@@ -475,15 +627,6 @@ const AITutor = () => {
     }
   }, [messages]);
 
-  const getAI = () => {
-    const savedConfig = localStorage.getItem('ace_ai_config');
-    const config = savedConfig ? JSON.parse(savedConfig) : DEFAULT_AI_CONFIG;
-    if (!config.apiKey) {
-      throw new Error('请先在系统管理中配置 API Key');
-    }
-    return new GoogleGenAI({ apiKey: config.apiKey });
-  };
-
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
 
@@ -493,21 +636,7 @@ const AITutor = () => {
     setIsLoading(true);
 
     try {
-      const ai = getAI();
-      const savedConfig = localStorage.getItem('ace_ai_config');
-      const config = savedConfig ? JSON.parse(savedConfig) : DEFAULT_AI_CONFIG;
-      
-      const response = await ai.models.generateContent({
-        model: config.model,
-        contents: [
-          { role: 'user', parts: [{ text: `You are a friendly and professional English tutor. Help the student practice English. Keep responses concise and encouraging. Student says: ${userText}` }] }
-        ],
-        config: {
-          systemInstruction: "You are a friendly English tutor. Correct the student's grammar if necessary, but keep the conversation flowing. Use simple but natural English suitable for middle/high school students."
-        }
-      });
-
-      const aiResponse = response.text || 'Sorry, I encountered an error.';
+      const aiResponse = await generateChatResponse(userText);
       setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
       
       // Auto-speak the AI response
@@ -524,59 +653,12 @@ const AITutor = () => {
     setIsSpeaking(index);
 
     try {
-      const ai = getAI();
-      // US voices: Fenrir, Zephyr; UK voices: Puck, Charon, Kore
-      const voiceName = accent === 'US' ? 'Zephyr' : 'Puck';
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName },
-            },
-          },
-        },
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        // Gemini TTS returns raw PCM 16-bit at 24kHz
-        const binaryString = window.atob(base64Audio);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        const int16Buffer = new Int16Array(bytes.buffer);
-        const float32Buffer = new Float32Array(int16Buffer.length);
-        for (let i = 0; i < int16Buffer.length; i++) {
-          float32Buffer[i] = int16Buffer[i] / 32768.0;
-        }
-
-        const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-        const audioContext = new AudioContextClass();
-        const audioBuffer = audioContext.createBuffer(1, float32Buffer.length, 24000);
-        audioBuffer.getChannelData(0).set(float32Buffer);
-
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-        source.onended = () => {
-          setIsSpeaking(null);
-          audioContext.close();
-        };
-        source.start();
-      } else {
-        setIsSpeaking(null);
-      }
+      await generateTTS(text, accent);
+      setIsSpeaking(null);
     } catch (error) {
       console.error('TTS Error:', error);
       setIsSpeaking(null);
-      // Fallback to browser TTS if Gemini TTS fails
+      // Fallback to browser TTS if API TTS fails
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = accent === 'US' ? 'en-US' : 'en-GB';
       utterance.onend = () => setIsSpeaking(null);
@@ -908,13 +990,26 @@ const DictationModule = () => {
 
   const currentItem = currentData[currentIndex];
 
-  const handleSpeak = () => {
-    if (!currentItem) return;
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const handleSpeak = async () => {
+    if (!currentItem || isSpeaking) return;
+    setIsSpeaking(true);
+
     const text = mode === 'word' ? (currentItem as any).word : (currentItem as any).text;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.8;
-    window.speechSynthesis.speak(utterance);
+
+    try {
+      await generateTTS(text, 'US');
+      setIsSpeaking(false);
+    } catch (error) {
+      console.error('Dictation TTS Error:', error);
+      setIsSpeaking(false);
+      // Fallback to browser TTS
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.onend = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
   const checkAnswer = () => {
@@ -1043,9 +1138,13 @@ const DictationModule = () => {
             <div className="flex flex-col items-center gap-6">
               <button 
                 onClick={handleSpeak}
-                className="w-24 h-24 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-inner"
+                disabled={isSpeaking}
+                className={cn(
+                  "w-24 h-24 rounded-full flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-inner",
+                  isSpeaking ? "bg-blue-100 text-blue-500 animate-pulse" : "bg-blue-50 text-blue-500"
+                )}
               >
-                <Volume2 size={48} />
+                {isSpeaking ? <RotateCw size={48} className="animate-spin" /> : <Volume2 size={48} />}
               </button>
               <div className="text-center">
                 <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">点击图标播放音频</p>
@@ -1324,34 +1423,83 @@ const ManagementModule = () => {
             </h3>
             <div className="space-y-6">
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 ml-2">选择模型</label>
-                <div className="grid grid-cols-1 gap-3">
-                  {[
-                    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (推荐)', desc: '低延迟，高效率' },
-                    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '更强的逻辑推理能力' },
-                    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', desc: '极速响应' }
-                  ].map(model => (
-                    <button
-                      key={model.id}
-                      onClick={() => setAiConfig({...aiConfig, model: model.id})}
-                      className={cn(
-                        "flex items-center justify-between p-4 rounded-2xl border transition-all text-left",
-                        aiConfig.model === model.id 
-                          ? "bg-purple-50 border-purple-200 ring-4 ring-purple-500/5" 
-                          : "bg-slate-50 border-slate-100 hover:border-slate-200"
-                      )}
-                    >
-                      <div>
-                        <div className={cn("font-bold text-sm", aiConfig.model === model.id ? "text-purple-700" : "text-slate-700")}>
-                          {model.name}
-                        </div>
-                        <div className="text-[10px] text-slate-400">{model.desc}</div>
-                      </div>
-                      {aiConfig.model === model.id && <Check size={18} className="text-purple-500" />}
-                    </button>
-                  ))}
+                <label className="text-xs font-bold text-slate-500 ml-2">选择模型提供商</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setAiConfig({...aiConfig, provider: 'gemini', model: 'gemini-3-flash-preview'})}
+                    className={cn(
+                      "flex-1 py-2 rounded-xl text-sm font-bold transition-all",
+                      aiConfig.provider === 'gemini' ? "bg-purple-500 text-white shadow-md shadow-purple-100" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                    )}
+                  >
+                    Google Gemini
+                  </button>
+                  <button
+                    onClick={() => setAiConfig({...aiConfig, provider: 'openai', model: 'gpt-4o-mini', baseURL: 'https://api.openai.com/v1'})}
+                    className={cn(
+                      "flex-1 py-2 rounded-xl text-sm font-bold transition-all",
+                      aiConfig.provider === 'openai' ? "bg-purple-500 text-white shadow-md shadow-purple-100" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                    )}
+                  >
+                    OpenAI 兼容接口
+                  </button>
                 </div>
               </div>
+
+              {aiConfig.provider === 'gemini' ? (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 ml-2">选择模型</label>
+                  <div className="grid grid-cols-1 gap-3">
+                    {[
+                      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (推荐)', desc: '低延迟，高效率' },
+                      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '更强的逻辑推理能力' },
+                      { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', desc: '极速响应' }
+                    ].map(model => (
+                      <button
+                        key={model.id}
+                        onClick={() => setAiConfig({...aiConfig, model: model.id})}
+                        className={cn(
+                          "flex items-center justify-between p-4 rounded-2xl border transition-all text-left",
+                          aiConfig.model === model.id 
+                            ? "bg-purple-50 border-purple-200 ring-4 ring-purple-500/5" 
+                            : "bg-slate-50 border-slate-100 hover:border-slate-200"
+                        )}
+                      >
+                        <div>
+                          <div className={cn("font-bold text-sm", aiConfig.model === model.id ? "text-purple-700" : "text-slate-700")}>
+                            {model.name}
+                          </div>
+                          <div className="text-[10px] text-slate-400">{model.desc}</div>
+                        </div>
+                        {aiConfig.model === model.id && <Check size={18} className="text-purple-500" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-500 ml-2">Base URL</label>
+                    <input 
+                      type="text" 
+                      value={aiConfig.baseURL || ''}
+                      onChange={e => setAiConfig({...aiConfig, baseURL: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm outline-none focus:border-purple-500 transition-all"
+                      placeholder="例如: https://api.openai.com/v1"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-500 ml-2">模型名称</label>
+                    <input 
+                      type="text" 
+                      value={aiConfig.model}
+                      onChange={e => setAiConfig({...aiConfig, model: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm outline-none focus:border-purple-500 transition-all"
+                      placeholder="例如: gpt-4o, deepseek-chat"
+                    />
+                  </div>
+                </>
+              )}
 
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 ml-2">API Key</label>
@@ -1362,7 +1510,7 @@ const ManagementModule = () => {
                     value={aiConfig.apiKey}
                     onChange={e => setAiConfig({...aiConfig, apiKey: e.target.value})}
                     className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 pl-12 pr-4 text-sm outline-none focus:border-purple-500 transition-all"
-                    placeholder="请输入您的 Gemini API Key"
+                    placeholder={aiConfig.provider === 'gemini' ? "请输入您的 Gemini API Key" : "请输入您的 API Key"}
                   />
                 </div>
                 <p className="text-[10px] text-slate-400 ml-2">
@@ -1583,7 +1731,7 @@ export default function App() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-slate-800 truncate">{currentUser.username}</p>
-                <p className="text-[10px] text-slate-400">{currentUser.school} · {currentUser.grade} {currentUser.semester}</p>
+                <p className="text-[10px] text-slate-400">{currentUser.school} · {currentUser.grade} {currentUser.semester || '上学期'}</p>
               </div>
             </div>
             <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
