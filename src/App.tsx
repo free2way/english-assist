@@ -704,12 +704,19 @@ const AITutor = () => {
 
       recognition.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
-        setInputValue(transcript);
+        setInputValue(prev => prev + (prev ? ' ' : '') + transcript);
         setIsListening(false);
       };
 
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+          alert('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风。');
+        } else if (event.error === 'network') {
+          alert('语音识别网络错误，请检查网络连接或尝试使用科学上网。');
+        } else if (event.error !== 'no-speech') {
+          alert(`语音识别发生错误: ${event.error}`);
+        }
         setIsListening(false);
       };
 
@@ -722,15 +729,26 @@ const AITutor = () => {
   }, [accent]);
 
   const toggleListening = () => {
+    if (!recognitionRef.current) {
+      alert('您的浏览器不支持语音识别功能，推荐使用 Chrome 或 Edge 浏览器。');
+      return;
+    }
+
     if (isListening) {
-      recognitionRef.current?.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        console.error(e);
+      }
       setIsListening(false);
     } else {
       try {
-        recognitionRef.current?.start();
+        recognitionRef.current.start();
         setIsListening(true);
       } catch (error) {
         console.error('Failed to start recognition:', error);
+        alert('无法启动麦克风，请检查权限设置或刷新页面重试。');
+        setIsListening(false);
       }
     }
   };
