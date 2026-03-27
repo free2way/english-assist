@@ -438,7 +438,31 @@ const Statistics = () => (
 
 const getAIConfig = (): AIConfig => {
   const savedConfig = localStorage.getItem('ace_ai_config');
-  return savedConfig ? JSON.parse(savedConfig) : DEFAULT_AI_CONFIG;
+  if (savedConfig) {
+    try {
+      const parsed = JSON.parse(savedConfig);
+      // Ensure provider is set, default to gemini if missing from old saves
+      if (!parsed.provider) {
+        if (parsed.model && !parsed.model.startsWith('gemini')) {
+          parsed.provider = 'openai';
+        } else {
+          parsed.provider = 'gemini';
+        }
+      }
+      return { ...DEFAULT_AI_CONFIG, ...parsed };
+    } catch (e) {
+      console.error('Failed to parse AI config', e);
+    }
+  }
+  return DEFAULT_AI_CONFIG;
+};
+
+const getBaseUrl = (url?: string) => {
+  let baseUrl = (url || 'https://api.openai.com/v1').trim();
+  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+    baseUrl = 'https://' + baseUrl;
+  }
+  return baseUrl.replace(/\/+$/, '');
 };
 
 const generateChatResponse = async (userText: string): Promise<string> => {
@@ -446,7 +470,8 @@ const generateChatResponse = async (userText: string): Promise<string> => {
   if (!config.apiKey) throw new Error('请先在系统管理中配置 API Key');
 
   if (config.provider === 'openai') {
-    const response = await fetch(`${config.baseURL || 'https://api.openai.com/v1'}/chat/completions`, {
+    const baseUrl = getBaseUrl(config.baseURL);
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -463,7 +488,7 @@ const generateChatResponse = async (userText: string): Promise<string> => {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || 'Failed to fetch OpenAI response');
+      throw new Error(err.error?.message || `Failed to fetch OpenAI response (${response.status})`);
     }
 
     const data = await response.json();
@@ -483,89 +508,178 @@ const generateChatResponse = async (userText: string): Promise<string> => {
   }
 };
 
-const generateTTS = async (text: string, accent: 'US' | 'UK'): Promise<void> => {
+const generateTTS = async (text: string, accent: 'US' | 'UK'): Promise<boolean> => {
   const config = getAIConfig();
-  if (!config.apiKey) throw new Error('No API Key');
+  if (!config.apiKey) return false;
 
-  if (config.provider === 'openai') {
-    const voice = accent === 'US' ? 'alloy' : 'onyx';
-    const response = await fetch(`${config.baseURL || 'https://api.openai.com/v1'}/audio/speech`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'tts-1',
-        input: text,
-        voice: voice
-      })
-    });
+  try {
+    if (config.provider === 'openai') {
+      const baseUrl = getBaseUrl(config.baseURL);
+      const voice = accent === 'US' ? 'alloy' : 'onyx';
+      const response = await fetch(`${baseUrl}/audio/speech`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'tts-1',
+          input: text,
+          voice: voice
+        })
+      });
 
-    if (!response.ok) throw new Error('OpenAI TTS failed');
+      if (!response.ok) return false;
 
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    
-    return new Promise((resolve, reject) => {
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        resolve();
-      };
-      audio.onerror = reject;
-      audio.play();
-    });
-  } else {
-    const ai = new GoogleGenAI({ apiKey: config.apiKey });
-    const voiceName = accent === 'US' ? 'Zephyr' : 'Puck';
-    
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName },
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      
+      return new Promise((resolve) => {
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          resolve(true);
+        };
+        audio.onerror = () => resolve(false);
+        audio.play().catch(() => resolve(false));
+      });
+    } else {
+      const ai = new GoogleGenAI({ apiKey: config.apiKey });
+      const voiceName = accent === 'US' ? 'Zephyr' : 'Puck';
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
           },
         },
-      },
-    });
+      });
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!base64Audio) throw new Error('No audio data');
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!base64Audio) return false;
 
-    const binaryString = window.atob(base64Audio);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+      const binaryString = window.atob(base64Audio);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      const int16Buffer = new Int16Array(bytes.buffer);
+      const float32Buffer = new Float32Array(int16Buffer.length);
+      for (let i = 0; i < int16Buffer.length; i++) {
+        float32Buffer[i] = int16Buffer[i] / 32768.0;
+      }
+
+      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+      const audioContext = new AudioContextClass();
+      const audioBuffer = audioContext.createBuffer(1, float32Buffer.length, 24000);
+      audioBuffer.getChannelData(0).set(float32Buffer);
+
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+      
+      return new Promise((resolve) => {
+        source.onended = () => {
+          audioContext.close();
+          resolve(true);
+        };
+        source.start();
+      });
     }
-    
-    const int16Buffer = new Int16Array(bytes.buffer);
-    const float32Buffer = new Float32Array(int16Buffer.length);
-    for (let i = 0; i < int16Buffer.length; i++) {
-      float32Buffer[i] = int16Buffer[i] / 32768.0;
-    }
-
-    const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-    const audioContext = new AudioContextClass();
-    const audioBuffer = audioContext.createBuffer(1, float32Buffer.length, 24000);
-    audioBuffer.getChannelData(0).set(float32Buffer);
-
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
-    
-    return new Promise((resolve) => {
-      source.onended = () => {
-        audioContext.close();
-        resolve();
-      };
-      source.start();
-    });
+  } catch (error) {
+    return false;
   }
+};
+
+const playBrowserTTS = (text: string, accent: 'US' | 'UK', rate: number = 1.0): Promise<boolean> => {
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    const lang = accent === 'US' ? 'en-US' : 'en-GB';
+    utterance.lang = lang;
+    utterance.rate = rate;
+    
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoices = accent === 'US' 
+      ? ['Google US English', 'Samantha', 'Alex', 'Microsoft Zira', 'Microsoft David']
+      : ['Google UK English Female', 'Google UK English Male', 'Daniel', 'Serena', 'Microsoft Hazel'];
+      
+    let selectedVoice = null;
+    for (const name of preferredVoices) {
+      selectedVoice = voices.find(v => v.name.includes(name));
+      if (selectedVoice) break;
+    }
+    
+    if (!selectedVoice) {
+      selectedVoice = voices.find(v => v.lang === lang) || voices[0];
+    }
+    
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    
+    utterance.onend = () => resolve(true);
+    utterance.onerror = () => resolve(false);
+    
+    window.speechSynthesis.speak(utterance);
+  });
+};
+
+const playDictationAudio = async (text: string, mode: 'word' | 'sentence', accent: 'US' | 'UK'): Promise<boolean> => {
+  if (mode === 'word') {
+    try {
+      const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(text)}`);
+      if (response.ok) {
+        const data = await response.json();
+        const phonetics = data[0]?.phonetics || [];
+        let audioUrl = '';
+        
+        const suffix = accent === 'US' ? '-us.mp3' : '-uk.mp3';
+        const specificAudio = phonetics.find((p: any) => p.audio && p.audio.endsWith(suffix));
+        
+        if (specificAudio) {
+          audioUrl = specificAudio.audio;
+        } else {
+          const anyAudio = phonetics.find((p: any) => p.audio);
+          if (anyAudio) audioUrl = anyAudio.audio;
+        }
+        
+        if (audioUrl) {
+          const success = await new Promise<boolean>((resolve) => {
+            const audio = new Audio(audioUrl);
+            audio.onended = () => resolve(true);
+            audio.onerror = () => resolve(false);
+            audio.play().catch(() => resolve(false));
+          });
+          if (success) return true;
+        }
+      }
+    } catch (e) {
+      console.error('Dictionary API failed', e);
+    }
+  }
+
+  try {
+    const lang = accent === 'US' ? 'en-US' : 'en-GB';
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${lang}&client=tw-ob`;
+    const success = await new Promise<boolean>((resolve) => {
+      const audio = new Audio(url);
+      audio.onended = () => resolve(true);
+      audio.onerror = () => resolve(false);
+      audio.play().catch(() => resolve(false));
+    });
+    if (success) return true;
+  } catch (e) {
+    console.error('Google TTS failed', e);
+  }
+
+  return false;
 };
 
 const AITutor = () => {
@@ -653,17 +767,18 @@ const AITutor = () => {
     setIsSpeaking(index);
 
     try {
-      await generateTTS(text, accent);
-      setIsSpeaking(null);
+      const success = await generateTTS(text, accent);
+      if (success) {
+        setIsSpeaking(null);
+        return;
+      }
     } catch (error) {
       console.error('TTS Error:', error);
-      setIsSpeaking(null);
-      // Fallback to browser TTS if API TTS fails
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = accent === 'US' ? 'en-US' : 'en-GB';
-      utterance.onend = () => setIsSpeaking(null);
-      window.speechSynthesis.speak(utterance);
     }
+
+    // Fallback to browser TTS if API TTS fails or no key
+    await playBrowserTTS(text, accent);
+    setIsSpeaking(null);
   };
 
   return (
@@ -999,16 +1114,22 @@ const DictationModule = () => {
     const text = mode === 'word' ? (currentItem as any).word : (currentItem as any).text;
 
     try {
-      await generateTTS(text, 'US');
-      setIsSpeaking(false);
+      // 1. Try high-quality dictation audio (Dictionary API / Google TTS)
+      let success = await playDictationAudio(text, mode, 'US');
+      
+      // 2. Fallback to AI TTS if configured
+      if (!success) {
+        success = await generateTTS(text, 'US');
+      }
+      
+      // 3. Fallback to improved Browser TTS
+      if (!success) {
+        await playBrowserTTS(text, 'US', 0.9); // slightly slower for dictation
+      }
     } catch (error) {
-      console.error('Dictation TTS Error:', error);
+      await playBrowserTTS(text, 'US', 0.9);
+    } finally {
       setIsSpeaking(false);
-      // Fallback to browser TTS
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      utterance.onend = () => setIsSpeaking(false);
-      window.speechSynthesis.speak(utterance);
     }
   };
 
@@ -1247,7 +1368,20 @@ const ManagementModule = () => {
 
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
     const saved = localStorage.getItem('ace_ai_config');
-    return saved ? JSON.parse(saved) : DEFAULT_AI_CONFIG;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (!parsed.provider) {
+          if (parsed.model && !parsed.model.startsWith('gemini')) {
+            parsed.provider = 'openai';
+          } else {
+            parsed.provider = 'gemini';
+          }
+        }
+        return { ...DEFAULT_AI_CONFIG, ...parsed };
+      } catch (e) {}
+    }
+    return DEFAULT_AI_CONFIG;
   });
 
   const [newUser, setNewUser] = useState({
