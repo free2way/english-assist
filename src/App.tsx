@@ -178,6 +178,16 @@ interface SentenceItem {
 
 type LessonStageKey = 'preview' | 'reading' | 'dictation' | 'speaking';
 type MistakeCategory = 'vocab' | 'dictation' | 'speaking';
+type MistakeReason =
+  | 'unknown_vocab'
+  | 'pronunciation'
+  | 'missing_word'
+  | 'spelling'
+  | 'punctuation'
+  | 'sentence_structure'
+  | 'too_short'
+  | 'off_topic'
+  | 'fluency';
 
 interface LessonStage {
   key: LessonStageKey;
@@ -245,6 +255,8 @@ interface MistakeRecord {
   expected: string;
   answer: string;
   translation?: string;
+  reason?: MistakeReason;
+  hint?: string;
   createdAt: string;
 }
 
@@ -281,6 +293,15 @@ interface RecommendationItem {
   description: string;
   stage: LessonStageKey;
   priority: 'high' | 'medium' | 'low';
+}
+
+interface ReviewPackItem {
+  id: string;
+  title: string;
+  summary: string;
+  reasonLabel: string;
+  stage: LessonStageKey;
+  mistake: MistakeRecord;
 }
 
 const STUDY_STATE_STORAGE_PREFIX = 'ace_study_state';
@@ -404,6 +425,152 @@ const getCheckinStreak = (dailyCheckins: DailyCheckinRecord[]) => {
   return streak;
 };
 
+const MISTAKE_REASON_LABELS: Record<MistakeReason, string> = {
+  unknown_vocab: '词义不熟',
+  pronunciation: '跟读纠音',
+  missing_word: '漏词',
+  spelling: '拼写错误',
+  punctuation: '标点/格式',
+  sentence_structure: '句子结构',
+  too_short: '表达过短',
+  off_topic: '内容偏题',
+  fluency: '表达不流畅',
+};
+
+const getStageLabel = (stage: LessonStageKey) =>
+  stage === 'preview' ? '课时1 词汇预习' :
+  stage === 'reading' ? '课时2 重点句跟读' :
+  stage === 'dictation' ? '课时3 听写巩固' :
+  '课时4 口语表达';
+
+const getLessonOutcomeLabel = (unit: UnitBundle | null, stage: LessonStageKey, studyState: StudyState) => {
+  if (!unit) return '暂无课时数据';
+
+  if (stage === 'preview') {
+    const mastered = unit.vocab.filter((word) => studyState.masteredWordIds.includes(word.id)).length;
+    return `已掌握 ${mastered}/${unit.vocab.length || 0} 个核心词汇`;
+  }
+
+  if (stage === 'reading') {
+    const followed = unit.sentences.filter((sentence) => studyState.followedSentenceIds.includes(sentence.id)).length;
+    return `已完成 ${followed}/${unit.sentences.length || 0} 句重点句跟读`;
+  }
+
+  if (stage === 'dictation') {
+    const count = studyState.mistakes.filter((item) => item.stage === 'dictation' && item.unitId === unit.id).length;
+    return count > 0 ? `待复盘 ${count} 条听写问题` : '本单元听写表现稳定';
+  }
+
+  const count = studyState.mistakes.filter((item) => item.stage === 'speaking' && item.unitId === unit.id).length;
+  return count > 0 ? `待优化 ${count} 条口语反馈` : '口语输出已形成基本闭环';
+};
+
+const classifyDictationIssue = (input: string, target: string) => {
+  const cleanedInput = input.trim();
+  const cleanedTarget = target.trim();
+  const normalizedInput = cleanedInput.toLowerCase().replace(/[.,!?;:]/g, '');
+  const normalizedTarget = cleanedTarget.toLowerCase().replace(/[.,!?;:]/g, '');
+
+  if (!cleanedInput) {
+    return { reason: 'missing_word' as MistakeReason, hint: '这题没有作答，建议先听一遍抓关键词，再补全整句。' };
+  }
+
+  if (normalizedInput === normalizedTarget && cleanedInput !== cleanedTarget) {
+    return { reason: 'punctuation' as MistakeReason, hint: '内容基本正确，主要是大小写或标点格式需要再规范。' };
+  }
+
+  const inputWords = normalizedInput.split(/\s+/).filter(Boolean);
+  const targetWords = normalizedTarget.split(/\s+/).filter(Boolean);
+  if (targetWords.length > 1 && inputWords.length < targetWords.length) {
+    return { reason: 'missing_word' as MistakeReason, hint: '这题更像是漏词，建议先听主语、动词和时间地点信息。' };
+  }
+
+  if (targetWords.length > 1) {
+    return { reason: 'sentence_structure' as MistakeReason, hint: '句子顺序或结构有偏差，建议先跟读重点句再回听写。' };
+  }
+
+  return { reason: 'spelling' as MistakeReason, hint: '这题主要是拼写问题，建议先分音节拼读再重新默写。' };
+};
+
+const buildSpeakingFeedback = (userText: string, unit: UnitBundle | null) => {
+  const trimmed = userText.trim();
+  if (!trimmed) {
+    return { reason: 'too_short' as MistakeReason, hint: '先用 1-2 句完整句回答，再补充原因。', score: 0 };
+  }
+
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 5) {
+    return { reason: 'too_short' as MistakeReason, hint: '回答有点短，建议至少说到“观点 + 原因”两部分。', score: 1 };
+  }
+
+  const keywords = unit
+    ? [...unit.vocab.slice(0, 6).map((item) => item.word.toLowerCase()), ...unit.sentences.slice(0, 3).flatMap((item) => item.text.toLowerCase().split(/\s+/))]
+    : [];
+  const matchedKeywords = keywords.filter((keyword) => trimmed.toLowerCase().includes(keyword)).length;
+
+  if (unit && matchedKeywords === 0) {
+    return { reason: 'off_topic' as MistakeReason, hint: '内容和本单元主题连接不强，建议带上本单元关键词或重点句型。', score: 1 };
+  }
+
+  if (wordCount < 10) {
+    return { reason: 'fluency' as MistakeReason, hint: '意思基本到了，可以再多说一句，让表达更完整顺畅。', score: 2 };
+  }
+
+  return { reason: null, hint: '表达比较完整，继续保持完整句输出。', score: 3 };
+};
+
+const buildReviewPack = (studyState: StudyState): ReviewPackItem[] => {
+  const seen = new Set<string>();
+  return studyState.mistakes
+    .filter((item) => {
+      const key = `${item.stage}:${item.prompt}:${item.reason || 'none'}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 3)
+    .map((mistake) => ({
+      id: `review-${mistake.id}`,
+      title: mistake.stage === 'preview'
+        ? `回到 ${getStageLabel('preview')} 复习词汇`
+        : mistake.stage === 'dictation'
+          ? '重做一条听写巩固'
+          : '补一次口语表达',
+      summary: mistake.hint || `${mistake.prompt} 建议立即复盘，避免同类错误重复出现。`,
+      reasonLabel: mistake.reason ? MISTAKE_REASON_LABELS[mistake.reason] : '待复盘',
+      stage: mistake.stage,
+      mistake,
+    }));
+};
+
+const normalizeEnglishText = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[.,!?;:'"]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const calculateTextSimilarity = (input: string, target: string) => {
+  const normalizedInput = normalizeEnglishText(input);
+  const normalizedTarget = normalizeEnglishText(target);
+
+  if (!normalizedInput || !normalizedTarget) return 0;
+  if (normalizedInput === normalizedTarget) return 100;
+
+  const inputWords = normalizedInput.split(' ');
+  const targetWords = normalizedTarget.split(' ');
+  const matchedWords = targetWords.filter((word) => inputWords.includes(word)).length;
+  const ratio = matchedWords / Math.max(targetWords.length, 1);
+  return Math.max(0, Math.min(100, Math.round(ratio * 100)));
+};
+
+const getPronunciationHint = (score: number) => {
+  if (score >= 90) return '发音和内容都比较接近原句，可以继续保持这个节奏。';
+  if (score >= 70) return '整体不错，建议再注意连读、重音和停顿，让句子更完整自然。';
+  if (score >= 50) return '能说出部分关键词，建议先听一句、跟一句，再完整复述。';
+  return '和目标句差距还比较大，建议先慢速播放原句，再分段录音练习。';
+};
+
 const getWeaknessSummary = (studyState: StudyState) => {
   const counters = {
     vocab: studyState.mistakes.filter((item) => item.category === 'vocab').length,
@@ -450,13 +617,14 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
   if (!unit) return [];
 
   const recommendations: RecommendationItem[] = [];
+  const reviewPack = buildReviewPack(studyState);
   const latestMistake = studyState.mistakes[0];
 
-  if (latestMistake) {
+  if (reviewPack[0] && latestMistake) {
     recommendations.push({
       id: `retry-${latestMistake.id}`,
-      title: '先复盘最近错题',
-      description: `${latestMistake.prompt} 需要优先回练，避免同类错误重复出现。`,
+      title: '先完成今日复习包',
+      description: `${reviewPack[0].reasonLabel}优先处理，${latestMistake.prompt} 建议今天先回练。`,
       stage: latestMistake.stage,
       priority: 'high',
     });
@@ -478,7 +646,7 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
     recommendations.push({
       id: 'preview-refresh',
       title: '补齐本单元未掌握词汇',
-      description: '优先把还未掌握的单词补齐，再进入听写和口语输出。',
+      description: '先把词义和发音补稳，再进入听写和口语输出会更顺。',
       stage: 'preview',
       priority: 'medium',
     });
@@ -497,8 +665,8 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
   if (!recommendations.some((item) => item.stage === 'speaking')) {
     recommendations.push({
       id: 'speaking-boost',
-      title: '做一次单元口语闯关',
-      description: '围绕本单元主题回答 2-3 个问题，把输入转成输出。',
+      title: '做一次单元口语输出',
+      description: '围绕本单元主题回答 2-3 个问题，把输入真正转成输出。',
       stage: 'speaking',
       priority: 'low',
     });
@@ -718,6 +886,7 @@ const Dashboard = ({
   const completedCount = todayTasks.filter((task) => task.status === 'completed').length;
   const weaknessSummary = getWeaknessSummary(studyState);
   const recommendations = generateDailyRecommendations(currentUnit, studyState);
+  const reviewPack = buildReviewPack(studyState);
   const challengeStatus = getUnitChallengeStatus(currentUnit, studyState);
   const todayRecord = getOrCreateDailyCheckin(studyState, getTodayKey());
   const todayCheckin = calculateCheckinStatus(todayRecord);
@@ -772,6 +941,7 @@ const Dashboard = ({
                 </div>
                 <div className="font-bold text-slate-800 mb-1">{stage.title}</div>
                 <div className="text-xs text-slate-500">{stage.description}</div>
+                <div className="text-[11px] text-slate-400 mt-3">{getLessonOutcomeLabel(currentUnit, stage.key, studyState)}</div>
               </button>
             );
           })}
@@ -831,6 +1001,41 @@ const Dashboard = ({
         </div>
       </div>
 
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-bold text-slate-800">今日复习包</h3>
+            <p className="text-sm text-slate-500 mt-1">把今天最该回练的错点先清掉，再推进新课时。</p>
+          </div>
+          <span className="text-xs text-slate-400">最多 3 条高优先内容</span>
+        </div>
+        {reviewPack.length === 0 ? (
+          <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-sm text-emerald-700">
+            今天暂时没有待清理的复习包，可以直接推进当前课时。
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {reviewPack.map((item) => (
+              <div key={item.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-rose-500">{item.reasonLabel}</span>
+                  <span className="text-[10px] text-slate-400">{getStageLabel(item.stage)}</span>
+                </div>
+                <div className="font-bold text-slate-800">{item.title}</div>
+                <div className="text-xs text-slate-500 mt-2">{item.summary}</div>
+                <div className="text-xs text-slate-400 mt-2 line-clamp-2">对应内容：{item.mistake.prompt}</div>
+                <button
+                  onClick={() => onOpenStage(item.stage)}
+                  className="mt-4 px-3 py-2 rounded-xl bg-blue-500 text-white text-xs font-bold"
+                >
+                  立即回练
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
           <h3 className="font-bold text-slate-800 mb-4">弱项提醒</h3>
@@ -863,6 +1068,8 @@ const Dashboard = ({
                   <div className="text-sm font-bold text-slate-800">{mistake.prompt}</div>
                   <div className="text-xs text-slate-500 mt-1">你的答案：{mistake.answer || '未作答'}</div>
                   <div className="text-xs text-rose-600 mt-1">正确内容：{mistake.expected}</div>
+                  {mistake.reason && <div className="text-xs text-amber-600 mt-1">问题类型：{MISTAKE_REASON_LABELS[mistake.reason]}</div>}
+                  {mistake.hint && <div className="text-xs text-slate-500 mt-1">建议：{mistake.hint}</div>}
                 </div>
               ))
             )}
@@ -955,6 +1162,15 @@ const Statistics = ({
     return true;
   });
   const unitOptions = Array.from(new Set(studyState.mistakes.map((mistake) => mistake.unitId)));
+  const reviewPack = buildReviewPack(studyState);
+  const topWeakness = [...weaknessSummary].sort((a, b) => b.count - a.count)[0];
+  const topActions = [
+    reviewPack[0] ? `先复练：${reviewPack[0].reasonLabel}` : '继续保持当前节奏',
+    topWeakness?.count
+      ? topWeakness.hint
+      : '当前弱项压力不大，可以进入下一个课时',
+    currentUnit ? `当前单元建议优先完成 ${getStageLabel(currentUnit.stages.find((stage) => !studyState.completedTaskIds.includes(createTaskId(currentUnit.id, stage.key)))?.key || studyState.currentStage)}` : '暂无当前单元',
+  ];
   const progressChart = STAGE_META.map((stage) => ({
     name: stage.title.replace('课时', '').slice(0, 6),
     completed: studyState.completedTaskIds.filter((id) => id.endsWith(`:${stage.key}`)).length,
@@ -1028,6 +1244,17 @@ const Statistics = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+          <h3 className="font-bold text-slate-800 mb-4">今天最该补什么</h3>
+          <div className="space-y-3">
+            {topActions.map((item) => (
+              <div key={item} className="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-sm text-slate-600">
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
           <h3 className="font-bold text-slate-800 mb-4">弱项分析</h3>
           <div className="space-y-4">
             {weaknessSummary.map((item) => {
@@ -1086,6 +1313,12 @@ const Statistics = ({
                   <div className="text-sm font-bold text-slate-800">{mistake.prompt}</div>
                   <div className="text-xs text-slate-500 mt-1">你的答案：{mistake.answer || '未作答'}</div>
                   <div className="text-xs text-rose-600 mt-1">正确内容：{mistake.expected}</div>
+                  {mistake.reason && (
+                    <div className="text-xs text-amber-600 mt-1">错误类型：{MISTAKE_REASON_LABELS[mistake.reason]}</div>
+                  )}
+                  {mistake.hint && (
+                    <div className="text-xs text-slate-500 mt-1">复习建议：{mistake.hint}</div>
+                  )}
                   <button
                     onClick={() => onRetryMistake(mistake)}
                     className="mt-3 px-3 py-2 rounded-xl bg-blue-500 text-white text-xs font-bold"
@@ -1309,9 +1542,11 @@ const AITutor = ({
   const [recognitionAlternatives, setRecognitionAlternatives] = useState<string[]>([]);
   const [showAlternatives, setShowAlternatives] = useState(false);
   const [recognitionConfidence, setRecognitionConfidence] = useState(0);
+  const [practiceFeedback, setPracticeFeedback] = useState<{ level: 'good' | 'needs-work'; text: string } | null>(null);
 
   useEffect(() => {
     setMessages([{ role: 'ai', text: starterQuestion }]);
+    setPracticeFeedback(null);
   }, [starterQuestion]);
 
   // 教育场景常用词汇提示，帮助提高识别准确率
@@ -1383,6 +1618,8 @@ const AITutor = ({
                 prompt: '语音识别置信度较低',
                 expected: transcript,
                 answer: alternatives[0] || transcript,
+                reason: 'pronunciation',
+                hint: '建议放慢语速，再说一遍完整句子。',
               });
             }
           }
@@ -1486,6 +1723,23 @@ const AITutor = ({
     setIsLoading(true);
 
     try {
+      const feedback = buildSpeakingFeedback(userText, currentUnit);
+      setPracticeFeedback({
+        level: feedback.reason ? 'needs-work' : 'good',
+        text: feedback.hint,
+      });
+      if (feedback.reason && currentUnit) {
+        onAddMistake({
+          unitId: currentUnit.id,
+          category: 'speaking',
+          stage: 'speaking',
+          prompt: `口语任务：${currentUnit.title}`,
+          expected: coachConfig.goal,
+          answer: userText,
+          reason: feedback.reason,
+          hint: feedback.hint,
+        });
+      }
       const lessonPrompt = currentUnit
         ? `You are coaching a middle or high school student on FLTRP unit "${currentUnit.title}". Goal: ${coachConfig.goal}. Ask short follow-up questions and help the student answer more naturally. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}. Student response: ${userText}`
         : userText;
@@ -1564,6 +1818,17 @@ const AITutor = ({
             </button>
           ))}
         </div>
+
+        {practiceFeedback && (
+          <div className={cn(
+            "mb-5 rounded-2xl border p-4 text-sm",
+            practiceFeedback.level === 'good'
+              ? "bg-emerald-50 border-emerald-100 text-emerald-700"
+              : "bg-amber-50 border-amber-100 text-amber-700"
+          )}>
+            {practiceFeedback.text}
+          </div>
+        )}
 
         <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto custom-scrollbar pr-2 mb-6">
           {messages.map((msg, idx) => (
@@ -1742,6 +2007,15 @@ const VocabularyModule = ({
   const followedCount = currentUnit.sentences.filter((sentence) => studyState.followedSentenceIds.includes(sentence.id)).length;
   const [readingIndex, setReadingIndex] = useState(0);
   const [focusStage, setFocusStage] = useState<LessonStageKey | null>(null);
+  const [isRecordingSentence, setIsRecordingSentence] = useState(false);
+  const [recordedSentenceUrl, setRecordedSentenceUrl] = useState('');
+  const [recognizedSentenceText, setRecognizedSentenceText] = useState('');
+  const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
+  const [recordingError, setRecordingError] = useState('');
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const speechRecognitionRef = useRef<any>(null);
   const previewSectionRef = useRef<HTMLDivElement>(null);
   const readingSectionRef = useRef<HTMLDivElement>(null);
   const currentReadingSentence = currentUnit.sentences[readingIndex] || currentUnit.sentences[0];
@@ -1750,13 +2024,135 @@ const VocabularyModule = ({
 
   useEffect(() => {
     setReadingIndex(0);
+    setRecordedSentenceUrl('');
+    setRecognizedSentenceText('');
+    setPronunciationScore(null);
+    setRecordingError('');
   }, [currentUnit.id]);
+
+  useEffect(() => {
+    setRecognizedSentenceText('');
+    setPronunciationScore(null);
+    setRecordingError('');
+    if (recordedSentenceUrl) {
+      URL.revokeObjectURL(recordedSentenceUrl);
+      setRecordedSentenceUrl('');
+    }
+  }, [readingIndex]);
 
   useEffect(() => {
     if (!focusStage) return;
     const timer = window.setTimeout(() => setFocusStage(null), 1800);
     return () => window.clearTimeout(timer);
   }, [focusStage]);
+
+  useEffect(() => {
+    if (!currentReadingSentence || pronunciationScore === null || pronunciationScore >= 70) return;
+    onAddMistake({
+      unitId: currentUnit.id,
+      category: 'speaking',
+      stage: 'reading',
+      prompt: currentReadingSentence.text,
+      expected: currentReadingSentence.text,
+      answer: recognizedSentenceText || '录音完成但识别较弱',
+      translation: currentReadingSentence.translation,
+      reason: 'pronunciation',
+      hint: getPronunciationHint(pronunciationScore),
+    });
+  }, [pronunciationScore]);
+
+  useEffect(() => {
+    return () => {
+      if (recordedSentenceUrl) {
+        URL.revokeObjectURL(recordedSentenceUrl);
+      }
+      mediaRecorderRef.current?.stop?.();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      speechRecognitionRef.current?.stop?.();
+    };
+  }, [recordedSentenceUrl]);
+
+  const stopReadingPractice = () => {
+    mediaRecorderRef.current?.stop?.();
+    speechRecognitionRef.current?.stop?.();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    setIsRecordingSentence(false);
+  };
+
+  const handleToggleSentenceRecording = async () => {
+    if (!currentReadingSentence) return;
+
+    if (isRecordingSentence) {
+      stopReadingPractice();
+      return;
+    }
+
+    try {
+      setRecordingError('');
+      setRecognizedSentenceText('');
+      setPronunciationScore(null);
+      if (recordedSentenceUrl) {
+        URL.revokeObjectURL(recordedSentenceUrl);
+        setRecordedSentenceUrl('');
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      recordedChunksRef.current = [];
+
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = () => {
+        if (recordedChunksRef.current.length > 0) {
+          const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+          const url = URL.createObjectURL(blob);
+          setRecordedSentenceUrl(url);
+        }
+      };
+      recorder.start();
+
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        speechRecognitionRef.current = recognition;
+        recognition.lang = 'en-US';
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.onresult = (event: any) => {
+          const transcript = Array.from(event.results)
+            .map((result: any) => result[0]?.transcript || '')
+            .join(' ')
+            .trim();
+          setRecognizedSentenceText(transcript);
+          if (event.results[0]?.isFinal) {
+            const score = calculateTextSimilarity(transcript, currentReadingSentence.text);
+            setPronunciationScore(score);
+          }
+        };
+        recognition.onerror = () => {
+          setRecordingError('录音已保存，但语音识别没有成功，你仍然可以回放自己的录音。');
+        };
+        recognition.onend = () => {
+          if (isRecordingSentence) {
+            setIsRecordingSentence(false);
+          }
+        };
+        recognition.start();
+      }
+
+      setIsRecordingSentence(true);
+    } catch (error) {
+      setRecordingError('当前浏览器无法开启麦克风，请检查麦克风权限。');
+      setIsRecordingSentence(false);
+    }
+  };
 
   return (
     <div className="space-y-6 pb-20">
@@ -1820,9 +2216,20 @@ const VocabularyModule = ({
               <div className="font-bold text-slate-800">{stage.title}</div>
               <p className="text-xs text-slate-500 mt-2">{stage.description}</p>
               <div className="text-[10px] text-slate-400 mt-3">{stage.estimatedMinutes} 分钟</div>
+              <div className="text-[11px] text-slate-400 mt-2">{getLessonOutcomeLabel(currentUnit, stage.key, studyState)}</div>
             </button>
           );
         })}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {currentUnit.stages.map((stage) => (
+          <div key={`${stage.key}-goal`} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-500 mb-2">{getStageLabel(stage.key)}</div>
+            <div className="font-bold text-slate-800">{stage.description}</div>
+            <div className="text-xs text-slate-500 mt-2">{getLessonOutcomeLabel(currentUnit, stage.key, studyState)}</div>
+          </div>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1872,6 +2279,8 @@ const VocabularyModule = ({
                           prompt: word.word,
                           expected: word.definition,
                           answer: '未掌握',
+                          reason: 'unknown_vocab',
+                          hint: '建议先听发音，再结合例句确认词义和用法。',
                         });
                       }}
                       className="flex-1 py-2 rounded-xl bg-white border border-slate-100 text-slate-500 text-xs font-bold"
@@ -1946,6 +2355,22 @@ const VocabularyModule = ({
                       )}
                     >
                       {followed ? '已完成跟读' : '标记已跟读'}
+                    </button>
+                    <button
+                      onClick={() => onAddMistake({
+                        unitId: currentUnit.id,
+                        category: 'speaking',
+                        stage: 'reading',
+                        prompt: sentence.text,
+                        expected: '读准重音、连读和停顿',
+                        answer: '需要纠音',
+                        translation: sentence.translation,
+                        reason: 'pronunciation',
+                        hint: '先逐词听一遍，再完整跟读一遍，重点注意重音和停顿。',
+                      })}
+                      className="px-4 py-2 rounded-xl bg-white border border-amber-200 text-amber-600 text-xs font-bold"
+                    >
+                      需要纠音
                     </button>
                   </div>
                 </div>
@@ -2039,6 +2464,17 @@ const VocabularyModule = ({
                   播放本句
                 </button>
                 <button
+                  onClick={handleToggleSentenceRecording}
+                  className={cn(
+                    "px-4 py-3 rounded-2xl text-sm font-bold",
+                    isRecordingSentence
+                      ? "bg-red-500 text-white"
+                      : "bg-purple-500 text-white"
+                  )}
+                >
+                  {isRecordingSentence ? '停止录音并评测' : '开始录音跟读'}
+                </button>
+                <button
                   onClick={() => {
                     onToggleSentenceFollowed(currentReadingSentence.id);
                     if (readingIndex < currentUnit.sentences.length - 1) {
@@ -2059,6 +2495,8 @@ const VocabularyModule = ({
                       expected: '朗读需更流畅、完整',
                       answer: '朗读卡顿/未完成',
                       translation: currentReadingSentence.translation,
+                      reason: 'fluency',
+                      hint: '建议先分短意群停顿，再完整朗读一遍。',
                     });
                   }}
                   className="px-4 py-3 rounded-2xl bg-white border border-amber-200 text-amber-600 text-sm font-bold"
@@ -2066,6 +2504,55 @@ const VocabularyModule = ({
                   这句读不顺
                 </button>
               </div>
+
+              {(recordedSentenceUrl || recognizedSentenceText || recordingError) && (
+                <div className="mt-6 rounded-2xl bg-white border border-slate-100 p-4 space-y-3">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-400">跟读对比结果</div>
+                      <div className="text-sm text-slate-600 mt-1">先听原句，再回放自己的录音，对照识别内容和相似度。</div>
+                    </div>
+                    {pronunciationScore !== null && (
+                      <div className={cn(
+                        "px-3 py-2 rounded-xl text-sm font-bold",
+                        pronunciationScore >= 80 ? "bg-emerald-50 text-emerald-600" : pronunciationScore >= 60 ? "bg-amber-50 text-amber-600" : "bg-rose-50 text-rose-600"
+                      )}>
+                        发音相似度 {pronunciationScore}%
+                      </div>
+                    )}
+                  </div>
+
+                  {recordedSentenceUrl && (
+                    <div>
+                      <div className="text-xs font-bold text-slate-400 mb-2">我的录音</div>
+                      <audio controls src={recordedSentenceUrl} className="w-full" />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                      <div className="text-xs font-bold text-slate-400 mb-2">目标句子</div>
+                      <div className="text-sm font-bold text-slate-800">{currentReadingSentence.text}</div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                      <div className="text-xs font-bold text-slate-400 mb-2">识别结果</div>
+                      <div className="text-sm font-bold text-slate-800">{recognizedSentenceText || '等待识别结果'}</div>
+                    </div>
+                  </div>
+
+                  {pronunciationScore !== null && (
+                    <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-700">
+                      {getPronunciationHint(pronunciationScore)}
+                    </div>
+                  )}
+
+                  {recordingError && (
+                    <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">
+                      {recordingError}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
@@ -2137,6 +2624,8 @@ const DictationModule = ({
   const [userInput, setUserInput] = useState('');
   const [showResult, setShowResult] = useState<'none' | 'correct' | 'wrong'>('none');
   const [score, setScore] = useState({ correct: 0, total: 0 });
+  const [feedbackHint, setFeedbackHint] = useState('');
+  const [feedbackReason, setFeedbackReason] = useState<MistakeReason | null>(null);
 
   const currentData = currentUnit
     ? mode === 'word'
@@ -2184,12 +2673,17 @@ const DictationModule = ({
 
     if (normalizedInput === normalizedTarget) {
       setShowResult('correct');
+      setFeedbackHint('这题正确，可以继续下一题。');
+      setFeedbackReason(null);
       setScore(prev => ({ ...prev, correct: prev.correct + 1, total: prev.total + 1 }));
       if (currentIndex === currentData.length - 1) {
         onCompleteStage('dictation');
       }
     } else {
+      const issue = classifyDictationIssue(userInput, target);
       setShowResult('wrong');
+      setFeedbackHint(issue.hint);
+      setFeedbackReason(issue.reason);
       setScore(prev => ({ ...prev, total: prev.total + 1 }));
       if (currentUnit) {
         onAddMistake({
@@ -2200,6 +2694,8 @@ const DictationModule = ({
           expected: target,
           answer: userInput.trim(),
           translation: mode === 'sentence' ? (currentItem as any).translation : undefined,
+          reason: issue.reason,
+          hint: issue.hint,
         });
       }
     }
@@ -2208,6 +2704,8 @@ const DictationModule = ({
   const nextItem = () => {
     setUserInput('');
     setShowResult('none');
+    setFeedbackHint('');
+    setFeedbackReason(null);
     setCurrentIndex(prev => (prev + 1) % currentData.length);
   };
 
@@ -2215,6 +2713,8 @@ const DictationModule = ({
     setCurrentIndex(0);
     setUserInput('');
     setShowResult('none');
+    setFeedbackHint('');
+    setFeedbackReason(null);
     setScore({ correct: 0, total: 0 });
   };
 
@@ -2320,8 +2820,16 @@ const DictationModule = ({
                     <p className="text-xs font-bold text-red-800 mb-1">正确答案：</p>
                     <p className="text-sm text-red-700 font-mono">{mode === 'word' ? (currentItem as any).word : (currentItem as any).text}</p>
                     {mode === 'sentence' && <p className="text-[10px] text-red-500 mt-1">{(currentItem as any).translation}</p>}
+                    {feedbackReason && <p className="text-[10px] text-amber-600 mt-2">错误类型：{MISTAKE_REASON_LABELS[feedbackReason]}</p>}
+                    {feedbackHint && <p className="text-[10px] text-slate-500 mt-1">复习建议：{feedbackHint}</p>}
                   </div>
                 </motion.div>
+              )}
+
+              {showResult === 'correct' && feedbackHint && (
+                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 text-sm text-emerald-700">
+                  {feedbackHint}
+                </div>
               )}
 
               {showResult === 'none' ? (
@@ -3632,7 +4140,7 @@ export default function App() {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           createdAt: new Date().toISOString(),
         },
-        ...prev.mistakes,
+        ...prev.mistakes.filter((item) => !(item.prompt === record.prompt && item.stage === record.stage && item.reason === record.reason)),
       ].slice(0, 30),
     }));
   };
