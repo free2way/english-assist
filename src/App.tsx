@@ -177,7 +177,7 @@ interface SentenceItem {
 }
 
 type LessonStageKey = 'preview' | 'reading' | 'dictation' | 'speaking';
-type MistakeCategory = 'vocab' | 'dictation' | 'speaking';
+type MistakeCategory = 'vocab' | 'dictation' | 'speaking' | 'grammar';
 type MistakeReason =
   | 'unknown_vocab'
   | 'pronunciation'
@@ -187,7 +187,10 @@ type MistakeReason =
   | 'sentence_structure'
   | 'too_short'
   | 'off_topic'
-  | 'fluency';
+  | 'fluency'
+  | 'grammar_rule'
+  | 'word_order'
+  | 'sentence_judgement';
 
 interface LessonStage {
   key: LessonStageKey;
@@ -221,6 +224,7 @@ interface GrammarModule {
   tips: string[];
   examples: GrammarExample[];
   exercises: GrammarExercise[];
+  sourceType?: 'configured' | 'generated';
 }
 
 interface UnitBundle {
@@ -507,6 +511,7 @@ const buildGrammarModule = (unit: {
       tips: ['I 搭配 am', 'he / she / it 搭配 is', 'you / we / they 搭配 are'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -525,6 +530,7 @@ const buildGrammarModule = (unit: {
       tips: ['形容词性物主代词后面要跟名词', '名词性物主代词可以单独使用', 'Whose ... is this? 用来询问所属'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -543,6 +549,7 @@ const buildGrammarModule = (unit: {
       tips: ['can 后接动词原形', '否定形式是 can’t', '一般疑问句把 can 放到句首'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -561,6 +568,7 @@ const buildGrammarModule = (unit: {
       tips: ['单数名词前用 there is', '复数名词前用 there are', '句子里常搭配地点状语'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -579,6 +587,7 @@ const buildGrammarModule = (unit: {
       tips: ['I / we / you / they 搭配 have got', 'he / she / it 搭配 has got', '疑问句把 have / has 提前'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -597,6 +606,7 @@ const buildGrammarModule = (unit: {
       tips: ['经常性动作用一般现在时', '第三人称单数动词常加 s', '时间点前常用 at'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -615,6 +625,7 @@ const buildGrammarModule = (unit: {
       tips: ['肯定句里常见 someone / something', '疑问句和否定句里常见 anyone / anything', '不定代词作主语时通常看作单数'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -633,6 +644,7 @@ const buildGrammarModule = (unit: {
       tips: ['系动词后面常接形容词', 'look / smell / taste / feel 都可以表达状态', '不要把系动词后误接副词'],
       examples,
       exercises,
+      sourceType: 'configured',
     };
   }
 
@@ -648,6 +660,7 @@ const buildGrammarModule = (unit: {
     tips: ['先读懂句型的意思', '注意句子开头的提问方式', '把重点句型替换成自己的内容再说一遍'],
     examples,
     exercises,
+    sourceType: 'generated',
   };
 };
 
@@ -768,6 +781,9 @@ const MISTAKE_REASON_LABELS: Record<MistakeReason, string> = {
   too_short: '表达过短',
   off_topic: '内容偏题',
   fluency: '表达不流畅',
+  grammar_rule: '语法规则',
+  word_order: '词序问题',
+  sentence_judgement: '正误判断',
 };
 
 const getStageLabel = (stage: LessonStageKey) =>
@@ -1629,6 +1645,7 @@ const Statistics = ({
               <option value="vocab">词汇</option>
               <option value="dictation">听写</option>
               <option value="speaking">口语</option>
+              <option value="grammar">语法</option>
             </select>
             <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as 'all' | LessonStageKey)} className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs outline-none">
               <option value="all">全部课时</option>
@@ -2521,6 +2538,17 @@ const VocabularyModule = ({
       ...prev,
       [exercise.id]: `还不对：${exercise.explanation}`,
     }));
+
+    onAddMistake({
+      unitId: currentUnit.id,
+      category: 'grammar',
+      stage: 'reading',
+      prompt: `${exercise.prompt}：${exercise.question}`,
+      expected: exercise.answer,
+      answer: option,
+      reason: exercise.type === 'judge' ? 'sentence_judgement' : 'grammar_rule',
+      hint: exercise.explanation,
+    });
   };
 
   const handleGrammarFill = (exercise: GrammarExercise) => {
@@ -2546,6 +2574,17 @@ const VocabularyModule = ({
       ...prev,
       [exercise.id]: `还不对：${exercise.explanation}`,
     }));
+
+    onAddMistake({
+      unitId: currentUnit.id,
+      category: 'grammar',
+      stage: 'reading',
+      prompt: `${exercise.prompt}：${exercise.question}`,
+      expected: exercise.answer,
+      answer: grammarDrafts[exercise.id] || '',
+      reason: exercise.type === 'reorder' ? 'word_order' : 'grammar_rule',
+      hint: exercise.explanation,
+    });
   };
 
   return (
@@ -2837,11 +2876,16 @@ const VocabularyModule = ({
             <h3 className="font-bold text-slate-800">{currentUnit.grammar.title}</h3>
             <p className="text-sm text-slate-500 mt-1">{currentUnit.grammar.focus}</p>
           </div>
-          <div className={cn(
-            "px-4 py-2 rounded-2xl text-xs font-bold",
-            grammarCompleted ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-violet-50 text-violet-600 border border-violet-100"
-          )}>
-            {grammarCompleted ? '语法模块已完成' : `待完成 ${currentUnit.grammar.exercises.length - completedGrammarCount} 题`}
+          <div className="flex flex-wrap gap-2">
+            <div className="px-4 py-2 rounded-2xl text-xs font-bold bg-slate-50 text-slate-600 border border-slate-100">
+              {currentUnit.grammar.sourceType === 'configured' ? '教材语法点已配置' : '语法点由教材内容自动生成'}
+            </div>
+            <div className={cn(
+              "px-4 py-2 rounded-2xl text-xs font-bold",
+              grammarCompleted ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-violet-50 text-violet-600 border border-violet-100"
+            )}>
+              {grammarCompleted ? '语法模块已完成' : `待完成 ${currentUnit.grammar.exercises.length - completedGrammarCount} 题`}
+            </div>
           </div>
         </div>
 
