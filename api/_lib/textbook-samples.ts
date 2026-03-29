@@ -1,5 +1,5 @@
-import { FLTRP_SENTENCES } from '../../src/data/sentences';
-import { FLTRP_VOCAB } from '../../src/data/vocabulary';
+import { FLTRP_SENTENCES } from './sentences';
+import { FLTRP_VOCAB } from './vocabulary';
 
 export interface TextbookSampleUnit {
   unitCode: string;
