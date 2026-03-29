@@ -5,6 +5,17 @@ import { app } from '../server/app';
 const ready = initializeDatabase();
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
-  await ready;
-  return app(req as any, res as any);
+  try {
+    await ready;
+    return app(req as any, res as any);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Server initialization failed';
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({
+      ok: false,
+      error: message,
+      hint: 'Check Vercel environment variables: TURSO_DATABASE_URL and TURSO_AUTH_TOKEN',
+    }));
+  }
 }

@@ -101,10 +101,15 @@ const DB_PATH = path.join(DB_DIR, 'app.db');
 const DEFAULT_LOCAL_URL = `file:${DB_PATH}`;
 const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL?.trim();
 const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN?.trim();
+const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL === 'true';
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin1234';
 const DEFAULT_SESSION_HOURS = 24 * 7;
 const ALLOWED_SESSION_HOURS = new Set([12, 24 * 7, 24 * 30]);
+
+if (IS_VERCEL && !TURSO_DATABASE_URL) {
+  throw new Error('Missing TURSO_DATABASE_URL in Vercel environment');
+}
 
 if (!TURSO_DATABASE_URL) {
   if (!fs.existsSync(DB_DIR)) {
