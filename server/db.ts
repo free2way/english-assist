@@ -101,17 +101,19 @@ const DB_PATH = path.join(DB_DIR, 'app.db');
 const DEFAULT_LOCAL_URL = `file:${DB_PATH}`;
 const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL?.trim();
 const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN?.trim();
-const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL === 'true';
+const IS_VERCEL =
+  process.env.VERCEL === '1' ||
+  process.env.VERCEL === 'true' ||
+  Boolean(process.env.VERCEL_ENV) ||
+  Boolean(process.env.NOW_REGION);
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin1234';
 const DEFAULT_SESSION_HOURS = 24 * 7;
 const ALLOWED_SESSION_HOURS = new Set([12, 24 * 7, 24 * 30]);
 
-if (IS_VERCEL && !TURSO_DATABASE_URL) {
-  throw new Error('Missing TURSO_DATABASE_URL in Vercel environment');
-}
+const SHOULD_USE_LOCAL_FILE = !TURSO_DATABASE_URL && !IS_VERCEL;
 
-if (!TURSO_DATABASE_URL) {
+if (SHOULD_USE_LOCAL_FILE) {
   if (!fs.existsSync(DB_DIR)) {
     fs.mkdirSync(DB_DIR, { recursive: true });
   }
@@ -326,6 +328,14 @@ const createDefaultAdmin = async () => {
 export const initializeDatabase = async () => {
   if (!initializationPromise) {
     initializationPromise = (async () => {
+      if (IS_VERCEL && !TURSO_DATABASE_URL) {
+        throw new Error('Missing TURSO_DATABASE_URL in Vercel environment');
+      }
+
+      if (IS_VERCEL && TURSO_DATABASE_URL && !TURSO_AUTH_TOKEN) {
+        throw new Error('Missing TURSO_AUTH_TOKEN in Vercel environment');
+      }
+
       for (const statement of schemaStatements) {
         await executeStatement(statement);
       }
