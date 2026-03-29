@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { initializeDatabase } from '../server/db';
-import { app } from '../server/app';
+import { initializeDatabase } from './_lib/db';
+import { app } from './_lib/app';
 
 let ready: Promise<void> | null = null;
 
