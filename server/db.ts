@@ -106,8 +106,10 @@ const ADMIN_PASSWORD = 'admin1234';
 const DEFAULT_SESSION_HOURS = 24 * 7;
 const ALLOWED_SESSION_HOURS = new Set([12, 24 * 7, 24 * 30]);
 
-if (!fs.existsSync(DB_DIR)) {
-  fs.mkdirSync(DB_DIR, { recursive: true });
+if (!TURSO_DATABASE_URL) {
+  if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+  }
 }
 
 const client: Client = createClient({
