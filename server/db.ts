@@ -111,18 +111,7 @@ const ADMIN_PASSWORD = 'admin1234';
 const DEFAULT_SESSION_HOURS = 24 * 7;
 const ALLOWED_SESSION_HOURS = new Set([12, 24 * 7, 24 * 30]);
 
-const SHOULD_USE_LOCAL_FILE = !TURSO_DATABASE_URL && !IS_VERCEL;
-
-if (SHOULD_USE_LOCAL_FILE) {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-  }
-}
-
-const client: Client = createClient({
-  url: TURSO_DATABASE_URL || DEFAULT_LOCAL_URL,
-  authToken: TURSO_DATABASE_URL ? TURSO_AUTH_TOKEN : undefined,
-});
+let client: Client | null = null;
 
 const schemaStatements = [
   `
@@ -243,6 +232,13 @@ const schemaStatements = [
 
 let initializationPromise: Promise<void> | null = null;
 
+const getClient = () => {
+  if (!client) {
+    throw new Error('Database client not initialized');
+  }
+  return client;
+};
+
 const hashPassword = (password: string, salt: string) =>
   crypto.scryptSync(password, salt, 64).toString('hex');
 
@@ -286,7 +282,7 @@ const mapTextbookSummary = (row: any): TextbookSummary => ({
 });
 
 const queryAll = async <T = any>(sql: string, args: any[] = []) => {
-  const result = await client.execute({ sql, args });
+  const result = await getClient().execute({ sql, args });
   return result.rows as unknown as T[];
 };
 
@@ -296,7 +292,7 @@ const queryFirst = async <T = any>(sql: string, args: any[] = []) => {
 };
 
 const executeStatement = async (sql: string, args: any[] = []) => {
-  await client.execute({ sql, args });
+  await getClient().execute({ sql, args });
 };
 
 const createDefaultAdmin = async () => {
@@ -334,6 +330,18 @@ export const initializeDatabase = async () => {
 
       if (IS_VERCEL && TURSO_DATABASE_URL && !TURSO_AUTH_TOKEN) {
         throw new Error('Missing TURSO_AUTH_TOKEN in Vercel environment');
+      }
+
+      if (!client) {
+        const shouldUseLocalFile = !TURSO_DATABASE_URL && !IS_VERCEL;
+        if (shouldUseLocalFile && !fs.existsSync(DB_DIR)) {
+          fs.mkdirSync(DB_DIR, { recursive: true });
+        }
+
+        client = createClient({
+          url: TURSO_DATABASE_URL || DEFAULT_LOCAL_URL,
+          authToken: TURSO_DATABASE_URL ? TURSO_AUTH_TOKEN : undefined,
+        });
       }
 
       for (const statement of schemaStatements) {
