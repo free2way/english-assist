@@ -1,28 +1,16 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { initializeDatabase } from '../server/db';
+import { app } from '../server/app';
 
-let ready: Promise<{
-  app: (req: IncomingMessage, res: ServerResponse) => unknown;
-}> | null = null;
-
-const loadServer = async () => {
-  const [{ initializeDatabase }, { app }] = await Promise.all([
-    import('../server/db'),
-    import('../server/app'),
-  ]);
-
-  await initializeDatabase();
-  return {
-    app: app as unknown as (req: IncomingMessage, res: ServerResponse) => unknown,
-  };
-};
+let ready: Promise<void> | null = null;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
     if (!ready) {
-      ready = loadServer();
+      ready = initializeDatabase();
     }
-    const server = await ready;
-    return server.app(req, res);
+    await ready;
+    return app(req as any, res as any);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Server initialization failed';
     res.statusCode = 500;
