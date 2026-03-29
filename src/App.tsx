@@ -196,6 +196,33 @@ interface LessonStage {
   estimatedMinutes: number;
 }
 
+interface GrammarExample {
+  text: string;
+  translation: string;
+}
+
+interface GrammarExercise {
+  id: string;
+  type: 'choice' | 'fill' | 'judge' | 'correction' | 'reorder';
+  prompt: string;
+  question: string;
+  answer: string;
+  explanation: string;
+  options?: string[];
+  clue?: string;
+  tokens?: string[];
+}
+
+interface GrammarModule {
+  id: string;
+  title: string;
+  focus: string;
+  summary: string;
+  tips: string[];
+  examples: GrammarExample[];
+  exercises: GrammarExercise[];
+}
+
 interface UnitBundle {
   id: string;
   textbookId: string;
@@ -210,6 +237,7 @@ interface UnitBundle {
   stages: LessonStage[];
   phrases?: Array<{ id: string; phrase: string; meaning: string; example: string; sortOrder: number }>;
   patterns?: Array<{ id: string; text: string; translation: string; kind: 'sentence' | 'pattern'; sortOrder: number }>;
+  grammar: GrammarModule;
 }
 
 interface TextbookSummary {
@@ -282,6 +310,7 @@ interface StudyState {
   completedTaskIds: string[];
   masteredWordIds: string[];
   followedSentenceIds: string[];
+  completedGrammarQuestionIds: string[];
   mistakes: MistakeRecord[];
   dailyCheckins: DailyCheckinRecord[];
   challengeAttempts: ChallengeAttempt[];
@@ -327,6 +356,301 @@ const createTaskId = (unitId: string, stage: LessonStageKey) => `${unitId}:${sta
 const getStudyStorageKey = (username: string, textbookId: string) => `${STUDY_STATE_STORAGE_PREFIX}:${username}:${textbookId}`;
 const getSelectedTextbookStorageKey = (username: string) => `ace_selected_textbook:${username}`;
 
+const normalizeGrammarAnswer = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[.,!?;:]/g, '')
+    .replace(/\s+/g, ' ');
+
+const buildGrammarExamples = (
+  patterns: Array<{ text: string; translation: string }> | undefined,
+  sentences: SentenceItem[]
+): GrammarExample[] => {
+  const sources = (patterns && patterns.length > 0 ? patterns : sentences).slice(0, 2);
+  return sources.map((item) => ({
+    text: item.text,
+    translation: item.translation,
+  }));
+};
+
+const buildBrokenSentence = (sentence: string) => {
+  if (sentence.includes(' are ')) return sentence.replace(' are ', ' is ');
+  if (sentence.includes(' is ')) return sentence.replace(' is ', ' are ');
+  if (sentence.includes(' can ')) return sentence.replace(' can ', ' can to ');
+  if (sentence.includes(' have got ')) return sentence.replace(' have got ', ' has got ');
+  if (sentence.includes(' has got ')) return sentence.replace(' has got ', ' have got ');
+  if (sentence.includes(' There are ')) return sentence.replace('There are', 'There is');
+  if (sentence.includes(' There is ')) return sentence.replace('There is', 'There are');
+
+  const words = sentence.split(/\s+/);
+  if (words.length > 3) {
+    const swapped = [...words];
+    [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
+    return swapped.join(' ');
+  }
+
+  return `${sentence} not`;
+};
+
+const scrambleTokens = (sentence: string) => {
+  const tokens = sentence
+    .replace(/[.,!?]/g, '')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length < 4) return tokens.slice().reverse();
+  return [...tokens.slice(2), ...tokens.slice(0, 2)];
+};
+
+const buildExtendedGrammarExercises = (
+  unitId: string,
+  examples: GrammarExample[],
+  startIndex: number
+): GrammarExercise[] => {
+  const firstExample = examples[0]?.text || 'I am from China.';
+  const secondExample = examples[1]?.text || firstExample;
+  const broken = buildBrokenSentence(firstExample);
+
+  return [
+    {
+      id: `${unitId}:grammar:${startIndex}`,
+      type: 'judge',
+      prompt: '判断正误',
+      question: `判断下面句子是否正确：${broken}`,
+      answer: '错误',
+      options: ['正确', '错误'],
+      explanation: '先判断句子是否自然，再回头定位主语、动词或词序哪里不对。',
+    },
+    {
+      id: `${unitId}:grammar:${startIndex + 1}`,
+      type: 'correction',
+      prompt: '病句改错',
+      question: broken,
+      answer: firstExample,
+      clue: '把错误句子改成正确的完整句。',
+      explanation: '改错题最重要的是把整句改通顺，而不只是改单个单词。',
+    },
+    {
+      id: `${unitId}:grammar:${startIndex + 2}`,
+      type: 'reorder',
+      prompt: '连词成句',
+      question: '请把下面这些词组成一个正确句子。',
+      answer: secondExample,
+      tokens: scrambleTokens(secondExample),
+      clue: '先找主语和动词，再补足其他成分。',
+      explanation: '连词成句时，优先确定“谁做什么”，再安排时间、地点等补充信息。',
+    },
+  ];
+};
+
+const buildKeyPatternExercises = (unit: {
+  id: string;
+  title: string;
+  patterns?: Array<{ text: string; translation: string }>;
+  sentences: SentenceItem[];
+}): GrammarExercise[] => {
+  const first = unit.patterns?.[0] || unit.sentences[0];
+  const second = unit.patterns?.[1] || unit.sentences[1] || first;
+  return [
+    {
+      id: `${unit.id}:grammar:1`,
+      type: 'choice',
+      prompt: '识别本单元常用句型',
+      question: '下面哪一句最符合本单元正在练习的重点表达？',
+      answer: first?.text || '',
+      options: [first?.text || '', second?.translation || '', unit.title, second?.text || ''],
+      explanation: '先抓住课文里反复出现的句型，再迁移到口语和写作里。',
+    },
+    {
+      id: `${unit.id}:grammar:2`,
+      type: 'fill',
+      prompt: '补全重点表达',
+      question: first?.text || '',
+      answer: first?.text.split(/\s+/)[0] || '',
+      clue: '输入句子的第一个关键词。',
+      explanation: '能准确说出句子开头，通常说明你已经记住了这个句型的发起方式。',
+    },
+    {
+      id: `${unit.id}:grammar:3`,
+      type: 'choice',
+      prompt: '选择最自然的表达',
+      question: `如果你要围绕 “${unit.title}” 开头表达，哪一句最自然？`,
+      answer: second?.text || '',
+      options: [unit.title, second?.text || '', second?.translation || '', 'I am English study.'],
+      explanation: '语法训练的目标不是死记规则，而是选出自然、完整的句子。',
+    },
+  ];
+};
+
+const buildGrammarModule = (unit: {
+  id: string;
+  title: string;
+  summary?: string;
+  patterns?: Array<{ text: string; translation: string }>;
+  sentences: SentenceItem[];
+}): GrammarModule => {
+  const source = `${unit.title} ${unit.summary || ''} ${(unit.patterns || []).map((item) => item.text).join(' ')}`.toLowerCase();
+  const examples = buildGrammarExamples(unit.patterns, unit.sentences);
+
+  if (source.includes('where are you from') || source.includes('years old')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '主谓搭配', question: 'I ___ from China.', answer: 'am', options: ['am', 'is', 'are'], explanation: '主语是 I，所以要用 am。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '问句结构', question: 'Where ___ you from?', answer: 'are', options: ['am', 'is', 'are'], explanation: '主语是 you，问句里要用 are。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '句子补全', question: 'She ___ thirteen years old.', answer: 'is', clue: '主语是 she。', explanation: 'she 是第三人称单数，所以这里填 is。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：be 动词 am / is / are',
+      focus: '学会根据主语选择 am、is、are，并完成自我介绍。',
+      summary: '这一单元的核心是用 be 动词介绍姓名、年龄、班级和来自哪里。先判断主语是谁，再选对 be 动词。',
+      tips: ['I 搭配 am', 'he / she / it 搭配 is', 'you / we / they 搭配 are'],
+      examples,
+      exercises,
+    };
+  }
+
+  if (source.includes('whose') || source.includes('yours')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '所属表达', question: 'This bag is ___.', answer: 'mine', options: ['my', 'mine', 'me'], explanation: '后面没有名词，所以要用名词性物主代词 mine。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '所属提问', question: '___ crayons are these?', answer: 'Whose', options: ['Who', 'Whose', 'Where'], explanation: '询问“谁的”要用 Whose。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '句子补全', question: 'Are these crayons ___?', answer: 'yours', clue: '后面没有名词。', explanation: '这里缺的是名词性物主代词 yours。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：物主代词',
+      focus: '区分 my / your 和 mine / yours，学会表达“是谁的东西”。',
+      summary: '这一单元常见的语法任务是失物招领，所以要能正确问和答“这是谁的”。',
+      tips: ['形容词性物主代词后面要跟名词', '名词性物主代词可以单独使用', 'Whose ... is this? 用来询问所属'],
+      examples,
+      exercises,
+    };
+  }
+
+  if (source.includes('can you') || source.includes('join the music club')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '能力表达', question: 'She can ___ the piano.', answer: 'play', options: ['plays', 'play', 'to play'], explanation: 'can 后接动词原形，所以选 play。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '一般疑问句', question: '___ you swim?', answer: 'Can', options: ['Do', 'Can', 'Are'], explanation: '询问能力时要把 can 放在句首。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '否定句', question: 'I ___ dance very well.', answer: "can't", clue: '表达“不会”。', explanation: '否定能力要用 can’t。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：情态动词 can',
+      focus: '用 can / can’t 表达能力、会不会做某事和加入社团的条件。',
+      summary: '这一单元会频繁出现“会不会做某事”的问答。can 后面直接接动词原形，不需要再加 to。',
+      tips: ['can 后接动词原形', '否定形式是 can’t', '一般疑问句把 can 放到句首'],
+      examples,
+      exercises,
+    };
+  }
+
+  if (source.includes('there are') || source.includes('there is')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '单复数判断', question: 'There ___ a big library in our school.', answer: 'is', options: ['is', 'are', 'be'], explanation: 'library 是单数，所以用 is。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '单复数判断', question: 'There ___ thirty classrooms in my school.', answer: 'are', options: ['is', 'are', 'has'], explanation: 'classrooms 是复数，所以用 are。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '句子补全', question: 'There ___ many books in the library.', answer: 'are', clue: 'many books 是复数。', explanation: '主语是复数名词 books，所以用 are。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：there is / there are',
+      focus: '描述某地“有”什么，先判断后面的名词是单数还是复数。',
+      summary: '介绍学校、教室、图书馆时，常用 there is / there are 来描述某处存在什么。',
+      tips: ['单数名词前用 there is', '复数名词前用 there are', '句子里常搭配地点状语'],
+      examples,
+      exercises,
+    };
+  }
+
+  if (source.includes('have got')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '主谓搭配', question: 'We ___ lots of apples.', answer: 'have got', options: ['has got', 'have got', 'have gets'], explanation: '主语是 We，所以用 have got。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '一般疑问句', question: '___ we got any juice?', answer: 'Have', options: ['Do', 'Have', 'Has'], explanation: '主语是 we，疑问句要用 Have 开头。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '主谓搭配', question: 'She ___ some milk at home.', answer: 'has got', clue: '主语是 she。', explanation: '第三人称单数 she 要用 has got。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：have got / has got',
+      focus: '表达“有”某物，并能正确构成一般疑问句和否定句。',
+      summary: '这一单元围绕食物和健康展开，常用 have got / has got 描述家里或自己拥有的食物。',
+      tips: ['I / we / you / they 搭配 have got', 'he / she / it 搭配 has got', '疑问句把 have / has 提前'],
+      examples,
+      exercises,
+    };
+  }
+
+  if (source.includes('what time') || source.includes('school starts')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '日常表达', question: 'School ___ at eight.', answer: 'starts', options: ['start', 'starts', 'starting'], explanation: 'School 看作单数主语，所以动词要用 starts。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '时间表达', question: 'I get up ___ seven o’clock.', answer: 'at', options: ['in', 'on', 'at'], explanation: '具体几点前通常用 at。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '一般现在时', question: 'He ___ his homework in the evening.', answer: 'does', clue: '主语是 he。', explanation: 'he 是第三人称单数，动词 do 要变成 does。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：一般现在时与时间表达',
+      focus: '用一般现在时描述日常作息，并读懂时间表达。',
+      summary: '这一单元主要讲日常作息。描述经常发生的事情时，一般现在时最常见，第三人称单数动词要加 s。',
+      tips: ['经常性动作用一般现在时', '第三人称单数动词常加 s', '时间点前常用 at'],
+      examples,
+      exercises,
+    };
+  }
+
+  if (source.includes('indefinite pronouns')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '语境选择', question: '___ is waiting for you outside.', answer: 'Someone', options: ['Someone', 'Anyone', 'No one'], explanation: '肯定句里表达“有人”常用 Someone。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '疑问句选择', question: 'Did you see ___ at the race?', answer: 'anyone', options: ['anyone', 'someone', 'everyone'], explanation: '一般疑问句里通常用 anyone。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '单数谓语', question: 'Everyone ___ excited.', answer: 'is', clue: 'Everyone 看作单数。', explanation: 'Everyone 虽然表示很多人，但语法上通常按单数处理。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：不定代词',
+      focus: '掌握 someone / anyone / everyone / something 等表达方式。',
+      summary: '不定代词可以帮助我们在不知道具体对象时表达“某人、任何人、每个人、某物”等意思。',
+      tips: ['肯定句里常见 someone / something', '疑问句和否定句里常见 anyone / anything', '不定代词作主语时通常看作单数'],
+      examples,
+      exercises,
+    };
+  }
+
+  if (source.includes('linking verbs')) {
+    const exercises: GrammarExercise[] = [
+      { id: `${unit.id}:grammar:1`, type: 'choice', prompt: '形容词搭配', question: 'The soup smells ___.', answer: 'nice', options: ['nicely', 'nice', 'well'], explanation: '系动词后要接形容词 nice。' },
+      { id: `${unit.id}:grammar:2`, type: 'choice', prompt: '语境选择', question: 'These dumplings ___ delicious.', answer: 'taste', options: ['taste', 'tastes', 'tasting'], explanation: '主语是复数 dumplings，所以这里用 taste。' },
+      { id: `${unit.id}:grammar:3`, type: 'fill', prompt: '感受表达', question: 'Warm porridge ___ comforting.', answer: 'feels', clue: '主语是单数。', explanation: '主语是单数 porridge，这里用 feels。' },
+      ...buildExtendedGrammarExercises(unit.id, examples, 4),
+    ];
+    return {
+      id: `${unit.id}:grammar`,
+      title: '语法模块：系动词',
+      focus: '用 look / smell / taste / feel / be 等系动词描述食物和感受。',
+      summary: '系动词后面常跟形容词，用来说明“是什么样、闻起来怎样、尝起来怎样”。',
+      tips: ['系动词后面常接形容词', 'look / smell / taste / feel 都可以表达状态', '不要把系动词后误接副词'],
+      examples,
+      exercises,
+    };
+  }
+
+  const exercises: GrammarExercise[] = [
+    ...buildKeyPatternExercises(unit),
+    ...buildExtendedGrammarExercises(unit.id, examples, 4),
+  ];
+  return {
+    id: `${unit.id}:grammar`,
+    title: '语法模块：本单元关键句型',
+    focus: '通过重点句型回看本单元最常用的表达结构。',
+    summary: '先看课文里最常出现的句型，再通过小练习把它们变成自己会用的表达。',
+    tips: ['先读懂句型的意思', '注意句子开头的提问方式', '把重点句型替换成自己的内容再说一遍'],
+    examples,
+    exercises,
+  };
+};
+
 const buildUnitBundlesFromTextbook = (textbook: TextbookContent | null): UnitBundle[] => {
   if (!textbook) return [];
 
@@ -357,6 +681,13 @@ const buildUnitBundlesFromTextbook = (textbook: TextbookContent | null): UnitBun
         : STAGE_META,
       phrases: unit.phrases,
       patterns: unit.patterns,
+      grammar: buildGrammarModule({
+        id: unit.id,
+        title: unit.title,
+        summary: unit.summary,
+        patterns: unit.patterns,
+        sentences: unit.sentences,
+      }),
     }));
 };
 
@@ -366,6 +697,7 @@ const createInitialStudyState = (units: UnitBundle[]): StudyState => ({
   completedTaskIds: [],
   masteredWordIds: [],
   followedSentenceIds: [],
+  completedGrammarQuestionIds: [],
   mistakes: [],
   dailyCheckins: [],
   challengeAttempts: [],
@@ -384,6 +716,7 @@ const normalizeStudyState = (raw: Partial<StudyState> | null, units: UnitBundle[
     completedTaskIds: Array.isArray(raw.completedTaskIds) ? raw.completedTaskIds : [],
     masteredWordIds: Array.isArray(raw.masteredWordIds) ? raw.masteredWordIds : [],
     followedSentenceIds: Array.isArray(raw.followedSentenceIds) ? raw.followedSentenceIds : [],
+    completedGrammarQuestionIds: Array.isArray(raw.completedGrammarQuestionIds) ? raw.completedGrammarQuestionIds : [],
     mistakes: Array.isArray(raw.mistakes) ? raw.mistakes.slice(0, 30) : [],
     dailyCheckins: Array.isArray(raw.dailyCheckins) ? raw.dailyCheckins.slice(0, 30) : [],
     challengeAttempts: Array.isArray(raw.challengeAttempts) ? raw.challengeAttempts.slice(0, 20) : [],
@@ -657,6 +990,16 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
       id: 'reading-refresh',
       title: '完成重点句跟读',
       description: '逐句跟读重点句，帮助后面的听写和表达更顺。',
+      stage: 'reading',
+      priority: 'medium',
+    });
+  }
+
+  if (unit.grammar.exercises.some((exercise) => !studyState.completedGrammarQuestionIds.includes(exercise.id))) {
+    recommendations.push({
+      id: 'grammar-refresh',
+      title: '完成本单元语法模块',
+      description: `先完成 ${unit.grammar.title}，再做听写和口语会更稳。`,
       stage: 'reading',
       priority: 'medium',
     });
@@ -1179,6 +1522,7 @@ const Statistics = ({
   const pieData = [
     { name: '词汇', value: studyState.masteredWordIds.length || 1, color: '#10b981' },
     { name: '跟读', value: studyState.followedSentenceIds.length || 1, color: '#3b82f6' },
+    { name: '语法', value: studyState.completedGrammarQuestionIds.length || 1, color: '#8b5cf6' },
     { name: '错题复盘', value: studyState.mistakes.length || 1, color: '#f97316' },
   ];
 
@@ -1195,6 +1539,7 @@ const Statistics = ({
           <div className="flex gap-3">
             <StatCard label="已完成课时" value={`${totalTasks}/4`} colorClass="text-blue-500" />
             <StatCard label="综合准确率" value={`${accuracy}%`} colorClass="text-emerald-500" />
+            <StatCard label="语法练习" value={String(studyState.completedGrammarQuestionIds.length)} colorClass="text-violet-500" />
             <StatCard label="待复盘错题" value={String(studyState.mistakes.length)} colorClass="text-rose-500" />
           </div>
         </div>
@@ -1981,6 +2326,7 @@ const VocabularyModule = ({
   onMarkWord,
   onToggleSentenceFollowed,
   onCompleteStage,
+  onCompleteGrammarExercise,
   onAddMistake,
 }: {
   units: UnitBundle[];
@@ -1992,6 +2338,7 @@ const VocabularyModule = ({
   onMarkWord: (wordId: string, mastered: boolean, word: VocabItem) => void;
   onToggleSentenceFollowed: (sentenceId: string) => void;
   onCompleteStage: (stage: LessonStageKey) => void;
+  onCompleteGrammarExercise: (exerciseId: string) => void;
   onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
 }) => {
   if (!currentUnit) {
@@ -2012,6 +2359,8 @@ const VocabularyModule = ({
   const [recognizedSentenceText, setRecognizedSentenceText] = useState('');
   const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
   const [recordingError, setRecordingError] = useState('');
+  const [grammarDrafts, setGrammarDrafts] = useState<Record<string, string>>({});
+  const [grammarFeedback, setGrammarFeedback] = useState<Record<string, string>>({});
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -2021,6 +2370,8 @@ const VocabularyModule = ({
   const currentReadingSentence = currentUnit.sentences[readingIndex] || currentUnit.sentences[0];
   const previewCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'preview'));
   const readingCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'reading'));
+  const completedGrammarCount = currentUnit.grammar.exercises.filter((exercise) => studyState.completedGrammarQuestionIds.includes(exercise.id)).length;
+  const grammarCompleted = completedGrammarCount === currentUnit.grammar.exercises.length;
 
   useEffect(() => {
     setReadingIndex(0);
@@ -2028,6 +2379,8 @@ const VocabularyModule = ({
     setRecognizedSentenceText('');
     setPronunciationScore(null);
     setRecordingError('');
+    setGrammarDrafts({});
+    setGrammarFeedback({});
   }, [currentUnit.id]);
 
   useEffect(() => {
@@ -2154,6 +2507,47 @@ const VocabularyModule = ({
     }
   };
 
+  const handleGrammarChoice = (exercise: GrammarExercise, option: string) => {
+    if (normalizeGrammarAnswer(option) === normalizeGrammarAnswer(exercise.answer)) {
+      onCompleteGrammarExercise(exercise.id);
+      setGrammarFeedback((prev) => ({
+        ...prev,
+        [exercise.id]: `回答正确：${exercise.explanation}`,
+      }));
+      return;
+    }
+
+    setGrammarFeedback((prev) => ({
+      ...prev,
+      [exercise.id]: `还不对：${exercise.explanation}`,
+    }));
+  };
+
+  const handleGrammarFill = (exercise: GrammarExercise) => {
+    const answer = normalizeGrammarAnswer(grammarDrafts[exercise.id] || '');
+    if (!answer) {
+      setGrammarFeedback((prev) => ({
+        ...prev,
+        [exercise.id]: '先输入答案再提交。',
+      }));
+      return;
+    }
+
+    if (answer === normalizeGrammarAnswer(exercise.answer)) {
+      onCompleteGrammarExercise(exercise.id);
+      setGrammarFeedback((prev) => ({
+        ...prev,
+        [exercise.id]: `回答正确：${exercise.explanation}`,
+      }));
+      return;
+    }
+
+    setGrammarFeedback((prev) => ({
+      ...prev,
+      [exercise.id]: `还不对：${exercise.explanation}`,
+    }));
+  };
+
   return (
     <div className="space-y-6 pb-20">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -2167,6 +2561,9 @@ const VocabularyModule = ({
           </div>
           <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-purple-600">
             已跟读句子 {followedCount}/{currentUnit.sentences.length}
+          </div>
+          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-violet-600">
+            语法练习 {completedGrammarCount}/{currentUnit.grammar.exercises.length}
           </div>
         </div>
       </div>
@@ -2433,6 +2830,132 @@ const VocabularyModule = ({
           </div>
         </div>
       )}
+
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+          <div>
+            <h3 className="font-bold text-slate-800">{currentUnit.grammar.title}</h3>
+            <p className="text-sm text-slate-500 mt-1">{currentUnit.grammar.focus}</p>
+          </div>
+          <div className={cn(
+            "px-4 py-2 rounded-2xl text-xs font-bold",
+            grammarCompleted ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-violet-50 text-violet-600 border border-violet-100"
+          )}>
+            {grammarCompleted ? '语法模块已完成' : `待完成 ${currentUnit.grammar.exercises.length - completedGrammarCount} 题`}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-6">
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-500 mb-2">Grammar Focus</div>
+              <p className="text-sm text-slate-600 leading-7">{currentUnit.grammar.summary}</p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">Key Tips</div>
+              <div className="space-y-2">
+                {currentUnit.grammar.tips.map((tip) => (
+                  <div key={tip} className="text-sm text-slate-600">• {tip}</div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">Examples</div>
+              <div className="space-y-3">
+                {currentUnit.grammar.examples.map((example, index) => (
+                  <div key={`${example.text}-${index}`} className="rounded-2xl bg-white border border-slate-100 p-4">
+                    <div className="font-bold text-slate-800">{example.text}</div>
+                    <div className="text-sm text-slate-500 mt-1">{example.translation}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {currentUnit.grammar.exercises.map((exercise, index) => {
+              const done = studyState.completedGrammarQuestionIds.includes(exercise.id);
+              const feedback = grammarFeedback[exercise.id];
+              return (
+                <div key={exercise.id} className="rounded-3xl border border-slate-100 bg-slate-50 p-5">
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-500 mb-2">Exercise {index + 1}</div>
+                      <div className="font-bold text-slate-800">{exercise.prompt}</div>
+                      <div className="text-sm text-slate-600 mt-2">{exercise.question}</div>
+                    </div>
+                    {done && <Check size={18} className="text-emerald-500 shrink-0" />}
+                  </div>
+
+                  {exercise.type === 'choice' || exercise.type === 'judge' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {exercise.options?.map((option) => (
+                        <button
+                          key={option}
+                          onClick={() => handleGrammarChoice(exercise, option)}
+                          className={cn(
+                            "rounded-2xl border px-4 py-3 text-left text-sm font-bold transition-all",
+                            done && option.trim().toLowerCase() === exercise.answer.trim().toLowerCase()
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-100 bg-white text-slate-700 hover:border-violet-200"
+                          )}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <div className="flex-1 space-y-3">
+                        {exercise.type === 'reorder' && exercise.tokens && (
+                          <div className="flex flex-wrap gap-2">
+                            {exercise.tokens.map((token, tokenIndex) => (
+                              <span
+                                key={`${exercise.id}:${token}:${tokenIndex}`}
+                                className="px-3 py-2 rounded-xl bg-white border border-slate-100 text-sm font-bold text-slate-600"
+                              >
+                                {token}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <input
+                          value={grammarDrafts[exercise.id] || ''}
+                          onChange={(event) =>
+                            setGrammarDrafts((prev) => ({
+                              ...prev,
+                              [exercise.id]: event.target.value,
+                            }))
+                          }
+                          className="w-full bg-white border border-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:border-violet-400"
+                          placeholder={exercise.clue || '请输入答案'}
+                        />
+                      </div>
+                      <button
+                        onClick={() => handleGrammarFill(exercise)}
+                        className="px-5 py-3 rounded-2xl bg-violet-500 text-white text-sm font-bold"
+                      >
+                        {exercise.type === 'correction' ? '提交改错' : exercise.type === 'reorder' ? '检查句子' : '检查答案'}
+                      </button>
+                    </div>
+                  )}
+
+                  {feedback && (
+                    <div className={cn(
+                      "mt-4 rounded-2xl border px-4 py-3 text-sm",
+                      done ? "bg-emerald-50 border-emerald-100 text-emerald-700" : "bg-amber-50 border-amber-100 text-amber-700"
+                    )}>
+                      {feedback}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
 
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
@@ -4131,6 +4654,21 @@ export default function App() {
     }));
   };
 
+  const handleCompleteGrammarExercise = (exerciseId: string) => {
+    setStudyState((prev) => ({
+      ...prev,
+      completedGrammarQuestionIds: prev.completedGrammarQuestionIds.includes(exerciseId)
+        ? prev.completedGrammarQuestionIds
+        : [...prev.completedGrammarQuestionIds, exerciseId],
+      dailyCheckins: updateTodayRecord(prev, (record) => ({
+        ...record,
+        completedTaskIds: record.completedTaskIds.includes(`grammar:${exerciseId}`)
+          ? record.completedTaskIds
+          : [...record.completedTaskIds, `grammar:${exerciseId}`],
+      })),
+    }));
+  };
+
   const handleAddMistake = (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => {
     setStudyState((prev) => ({
       ...prev,
@@ -4433,6 +4971,7 @@ export default function App() {
                   onMarkWord={handleMarkWord}
                   onToggleSentenceFollowed={handleToggleSentenceFollowed}
                   onCompleteStage={handleCompleteStage}
+                  onCompleteGrammarExercise={handleCompleteGrammarExercise}
                   onAddMistake={handleAddMistake}
                 />
               )}
