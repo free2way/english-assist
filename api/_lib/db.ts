@@ -3,7 +3,7 @@ import { createClient, type Client } from '@libsql/client';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TEXTBOOK_SAMPLES, type TextbookSample } from './textbook-samples';
+import { TEXTBOOK_SAMPLES, type TextbookSample } from './textbook-samples.js';
 
 export interface AuthUser {
   id: string;

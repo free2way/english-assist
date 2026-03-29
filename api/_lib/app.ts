@@ -14,7 +14,7 @@ import {
   listTextbookSamples,
   listTextbooks,
   type AuthUser,
-} from './db';
+} from './db.js';
 
 export const app = express();
 
