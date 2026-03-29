@@ -801,7 +801,7 @@ const TaskCard = ({ task }: any) => {
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex items-center gap-4 group hover:shadow-md transition-all"
+      className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-100 flex flex-col sm:flex-row sm:items-center gap-4 group hover:shadow-md transition-all"
     >
       <div className={cn(
         "w-12 h-12 rounded-xl flex items-center justify-center shrink-0",
@@ -814,7 +814,7 @@ const TaskCard = ({ task }: any) => {
         {task.type === 'retelling' && <Headphones size={24} />}
       </div>
       
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 w-full">
         <div className="flex items-center gap-2 mb-1">
           <h3 className="font-bold text-slate-800 truncate">{task.title}</h3>
           <span className={cn(
@@ -832,9 +832,9 @@ const TaskCard = ({ task }: any) => {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 w-full sm:w-auto">
         <button className={cn(
-          "px-4 py-2 rounded-full text-xs font-bold transition-all",
+          "px-4 py-2 rounded-full text-xs font-bold transition-all w-full sm:w-auto",
           isCompleted ? "bg-blue-500 text-white shadow-lg shadow-blue-200" : "bg-emerald-500 text-white shadow-lg shadow-emerald-200"
         )}>
           {isCompleted ? '查看报告' : isOngoing ? '继续练习' : '开始任务'}
@@ -894,7 +894,7 @@ const Dashboard = ({
 
   return (
     <div className="space-y-6 pb-20">
-      <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <StatCard label="今日任务" value={`${completedCount}/${todayTasks.length || 4}`} colorClass="text-blue-500" />
         <StatCard label="当前单元" value={currentUnit?.unit || '--'} colorClass="text-purple-500" />
         <StatCard label="错题累计" value={String(studyState.mistakes.length)} colorClass="text-rose-500" />
@@ -918,7 +918,7 @@ const Dashboard = ({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {currentUnit?.stages.map((stage, index) => {
             const isCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, stage.key));
             const isCurrent = studyState.currentStage === stage.key;
@@ -1949,7 +1949,7 @@ const AITutor = ({
       </div>
 
       {/* Scaffolding Tools */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all">
           <div className="text-[10px] text-slate-400 mb-1">关键词提示</div>
           <div className="text-xs font-bold text-blue-600">
@@ -2195,7 +2195,7 @@ const VocabularyModule = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {currentUnit.stages.map((stage, index) => {
           const completed = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, stage.key));
           return (
@@ -2222,7 +2222,7 @@ const VocabularyModule = ({
         })}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {currentUnit.stages.map((stage) => (
           <div key={`${stage.key}-goal`} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
             <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-500 mb-2">{getStageLabel(stage.key)}</div>
@@ -2232,7 +2232,7 @@ const VocabularyModule = ({
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
         <div
           ref={previewSectionRef}
           className={cn(
@@ -2392,7 +2392,7 @@ const VocabularyModule = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
           <h3 className="font-bold text-slate-800 mb-4">课文内容</h3>
           <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
@@ -2422,7 +2422,7 @@ const VocabularyModule = ({
       {currentUnit.phrases && currentUnit.phrases.length > 0 && (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
           <h3 className="font-bold text-slate-800 mb-4">固定搭配</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {currentUnit.phrases.map((phrase) => (
               <div key={phrase.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
                 <div className="font-bold text-slate-800">{phrase.phrase}</div>
@@ -2449,7 +2449,7 @@ const VocabularyModule = ({
         </div>
 
         {currentReadingSentence ? (
-          <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6">
+          <div className="grid grid-cols-1 2xl:grid-cols-[1.4fr_1fr] gap-6">
             <div className="rounded-3xl bg-slate-50 border border-slate-100 p-6">
               <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">
                 Sentence {readingIndex + 1}/{currentUnit.sentences.length}
@@ -2529,7 +2529,7 @@ const VocabularyModule = ({
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                     <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
                       <div className="text-xs font-bold text-slate-400 mb-2">目标句子</div>
                       <div className="text-sm font-bold text-slate-800">{currentReadingSentence.text}</div>
@@ -2587,7 +2587,7 @@ const VocabularyModule = ({
 
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
         <h3 className="font-bold text-slate-800 mb-4">课时3-4 巩固与输出闭环</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="rounded-2xl bg-slate-50 p-5 border border-slate-100">
             <div className="text-xs font-bold text-purple-500 uppercase tracking-[0.2em] mb-2">Step 3</div>
             <div className="font-bold text-slate-800 mb-2">进入听写巩固</div>
@@ -3346,7 +3346,7 @@ const ManagementModule = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-8">
         {/* User Management */}
         <div className="space-y-6">
           <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
@@ -3355,7 +3355,7 @@ const ManagementModule = ({
               新增用户
             </h3>
             <form onSubmit={handleAddUser} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">用户名</label>
                   <input 
@@ -3377,7 +3377,7 @@ const ManagementModule = ({
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">年级</label>
                   <select 
@@ -3436,14 +3436,14 @@ const ManagementModule = ({
                 <div className="text-center py-10 text-slate-300 italic text-sm">暂无普通用户</div>
               ) : (
                 users.map(user => (
-                  <div key={user.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group">
-                    <div className="flex items-center gap-3">
+                  <div key={user.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 group">
+                    <div className="flex items-center gap-3 min-w-0">
                       <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-500 shadow-sm">
                         <User size={20} />
                       </div>
-                      <div>
-                        <div className="font-bold text-slate-800 text-sm">{user.username}</div>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-800 text-sm truncate">{user.username}</div>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
                           <span className="flex items-center gap-0.5"><GraduationCap size={10} /> {user.grade} · {user.semester}</span>
                           <span className="flex items-center gap-0.5"><School size={10} /> {user.school}</span>
                         </div>
@@ -3451,7 +3451,7 @@ const ManagementModule = ({
                     </div>
                     <button 
                       onClick={() => handleDeleteUser(user.id)}
-                      className="p-2 text-slate-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                      className="self-end sm:self-auto p-2 text-slate-300 hover:text-red-500 transition-all opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                     >
                       <Trash2 size={18} />
                     </button>
@@ -3471,7 +3471,7 @@ const ManagementModule = ({
             </h3>
             <div className="space-y-4">
               <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-sm text-slate-600">
-                当前已导入 {textbooks.length} 套教材。现在可导入现有样板：七年级上册全册、七年级下册前 2 个单元。后续可以继续扩展为 PDF / Excel / OCR 导入。
+                当前已导入 {textbooks.length} 套教材。现在可导入现有样板，并继续扩展为 PDF / Excel / OCR 导入。
               </div>
               <div className="flex justify-end">
                 <button
@@ -3847,11 +3847,11 @@ const Login = ({ onLogin }: { onLogin: (user: AppUser) => void }) => {
   };
 
   return (
-    <div className="min-h-screen bg-bg-main flex items-center justify-center p-6">
+    <div className="min-h-screen bg-bg-main flex items-center justify-center p-4 sm:p-6">
       <motion.div 
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl shadow-blue-500/10 p-10 border border-slate-100"
+        className="w-full max-w-md bg-white rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl shadow-blue-500/10 p-6 sm:p-10 border border-slate-100"
       >
         <div className="text-center mb-10">
           <div className="w-20 h-20 rounded-3xl blue-gradient flex items-center justify-center text-white shadow-xl shadow-blue-200 mx-auto mb-6">
@@ -3899,7 +3899,7 @@ const Login = ({ onLogin }: { onLogin: (user: AppUser) => void }) => {
 
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-500 ml-4 uppercase tracking-wider">登录保留时长</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {SESSION_DURATION_OPTIONS.map((option) => (
                 <button
                   key={option.value}
@@ -4230,9 +4230,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-main flex flex-col md:flex-row font-sans">
+    <div className="min-h-screen bg-bg-main flex flex-col xl:flex-row font-sans">
       {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-64 bg-white border-r border-slate-100 flex-col p-6 sticky top-0 h-screen">
+      <aside className="hidden xl:flex w-72 bg-white border-r border-slate-100 flex-col p-6 sticky top-0 h-screen">
         <div className="mb-10">
           <h1 className="text-2xl font-black text-blue-600 tracking-tight">AceEnglish</h1>
           <p className="text-[10px] text-slate-400 mt-1">英语听说提分管家</p>
@@ -4297,11 +4297,11 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Header (Mobile & Desktop) */}
-        <header className="p-6 flex items-center justify-between sticky top-0 bg-bg-main/80 backdrop-blur-md z-40">
-          <div className="md:hidden">
+        <header className="px-4 py-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 sticky top-0 bg-bg-main/80 backdrop-blur-md z-40">
+          <div className="xl:hidden min-w-0">
             <h1 className="text-xl font-black text-blue-600 tracking-tight">AceEnglish</h1>
           </div>
-          <div className="hidden md:block">
+          <div className="hidden xl:block">
             <div className="flex items-center gap-2 text-slate-400 text-sm">
               <span>学习中心</span>
               <ChevronRight size={14} />
@@ -4311,8 +4311,8 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center bg-white border border-slate-100 rounded-full px-4 py-2 shadow-sm">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="hidden lg:flex items-center bg-white border border-slate-100 rounded-full px-4 py-2 shadow-sm">
               <Search size={16} className="text-slate-400 mr-2" />
               <input type="text" placeholder="搜索课程或单词..." className="bg-transparent text-xs outline-none w-32 lg:w-48" />
             </div>
@@ -4323,9 +4323,29 @@ export default function App() {
           </div>
         </header>
 
+        <div className="xl:hidden px-4 sm:px-6 lg:px-8 mb-4">
+          <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            {displayNavItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={cn(
+                  "shrink-0 flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-bold border transition-all",
+                  activeTab === item.id
+                    ? "bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-100"
+                    : "bg-white text-slate-500 border-slate-100"
+                )}
+              >
+                <item.icon size={16} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Content Scroll Area */}
-        <main className="flex-1 px-6 max-w-6xl mx-auto w-full">
-          <div className="mb-6 bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full pb-28 xl:pb-10">
+          <div className="mb-6 bg-white rounded-3xl p-4 sm:p-5 shadow-sm border border-slate-100">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
                 <div className="text-xs font-bold uppercase tracking-[0.2em] text-blue-500">Textbook Selector</div>
@@ -4342,7 +4362,7 @@ export default function App() {
                 <select
                   value={selectedTextbookId}
                   onChange={(e) => setSelectedTextbookId(e.target.value)}
-                  className="min-w-[260px] bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:border-blue-500 transition-all"
+                  className="w-full sm:min-w-[260px] bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:border-blue-500 transition-all"
                   disabled={isTextbookLoading || textbooks.length === 0}
                 >
                   <option value="">{isTextbookLoading ? '教材加载中...' : '请选择教材'}</option>
@@ -4473,7 +4493,7 @@ export default function App() {
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t border-slate-100 px-6 py-3 flex justify-between items-center z-50">
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-slate-100 px-3 py-3 flex justify-between items-center z-50">
         {displayNavItems.map((item) => (
           item.primary ? (
             <div key={item.id} className="relative -top-6">
@@ -4488,7 +4508,7 @@ export default function App() {
             <button 
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={cn("flex flex-col items-center gap-1 transition-all", activeTab === item.id ? "text-blue-500" : "text-slate-400")}
+              className={cn("flex flex-col items-center gap-1 transition-all min-w-[48px]", activeTab === item.id ? "text-blue-500" : "text-slate-400")}
             >
               <item.icon size={24} />
               <span className="text-[10px] font-bold">{item.label}</span>
