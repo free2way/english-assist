@@ -2,10 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { initializeDatabase } from '../server/db';
 import { app } from '../server/app';
 
-const ready = initializeDatabase();
+let ready: Promise<void> | null = null;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
+    if (!ready) {
+      ready = initializeDatabase();
+    }
     await ready;
     return app(req as any, res as any);
   } catch (error) {
