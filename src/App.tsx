@@ -176,6 +176,27 @@ interface SentenceItem {
   translation: string;
 }
 
+interface SpeechTokenResponse {
+  token: string;
+  region: string;
+  expiresInSeconds: number;
+}
+
+interface AzurePronunciationWord {
+  word: string;
+  accuracyScore: number;
+  errorType: string;
+}
+
+interface AzurePronunciationResult {
+  pronunciationScore: number;
+  accuracyScore: number;
+  fluencyScore: number;
+  completenessScore: number;
+  words: AzurePronunciationWord[];
+  feedback: string[];
+}
+
 type LessonStageKey = 'preview' | 'reading' | 'dictation' | 'speaking';
 type MistakeCategory = 'vocab' | 'dictation' | 'speaking' | 'grammar';
 type MistakeReason =
@@ -308,6 +329,19 @@ interface ChallengeAttempt {
   completedAt: string;
 }
 
+interface PronunciationAssessmentRecord {
+  id: string;
+  unitId: string;
+  sentenceId: string;
+  sentenceText: string;
+  pronunciationScore: number;
+  accuracyScore: number;
+  fluencyScore: number;
+  completenessScore: number;
+  weakWords: string[];
+  createdAt: string;
+}
+
 interface StudyState {
   currentUnitId: string;
   currentStage: LessonStageKey;
@@ -318,6 +352,7 @@ interface StudyState {
   mistakes: MistakeRecord[];
   dailyCheckins: DailyCheckinRecord[];
   challengeAttempts: ChallengeAttempt[];
+  pronunciationAssessments: PronunciationAssessmentRecord[];
 }
 
 interface RecommendationItem {
@@ -714,6 +749,7 @@ const createInitialStudyState = (units: UnitBundle[]): StudyState => ({
   mistakes: [],
   dailyCheckins: [],
   challengeAttempts: [],
+  pronunciationAssessments: [],
 });
 
 const normalizeStudyState = (raw: Partial<StudyState> | null, units: UnitBundle[]): StudyState => {
@@ -733,6 +769,7 @@ const normalizeStudyState = (raw: Partial<StudyState> | null, units: UnitBundle[
     mistakes: Array.isArray(raw.mistakes) ? raw.mistakes.slice(0, 30) : [],
     dailyCheckins: Array.isArray(raw.dailyCheckins) ? raw.dailyCheckins.slice(0, 30) : [],
     challengeAttempts: Array.isArray(raw.challengeAttempts) ? raw.challengeAttempts.slice(0, 20) : [],
+    pronunciationAssessments: Array.isArray(raw.pronunciationAssessments) ? raw.pronunciationAssessments.slice(0, 30) : [],
   };
 };
 
@@ -1523,6 +1560,13 @@ const Statistics = ({
   const unitOptions = Array.from(new Set(studyState.mistakes.map((mistake) => mistake.unitId)));
   const reviewPack = buildReviewPack(studyState);
   const topWeakness = [...weaknessSummary].sort((a, b) => b.count - a.count)[0];
+  const pronunciationRecords = currentUnit
+    ? studyState.pronunciationAssessments.filter((item) => item.unitId === currentUnit.id)
+    : studyState.pronunciationAssessments;
+  const latestPronunciation = pronunciationRecords[0];
+  const pronunciationAverage = pronunciationRecords.length > 0
+    ? Math.round(pronunciationRecords.reduce((sum, item) => sum + item.pronunciationScore, 0) / pronunciationRecords.length)
+    : null;
   const topActions = [
     reviewPack[0] ? `先复练：${reviewPack[0].reasonLabel}` : '继续保持当前节奏',
     topWeakness?.count
@@ -1601,6 +1645,65 @@ const Statistics = ({
             ))}
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+          <div>
+            <h3 className="font-bold text-slate-800">发音报告</h3>
+            <p className="text-sm text-slate-500 mt-1">展示当前单元最近的 Azure 发音评测结果。</p>
+          </div>
+          <div className="flex gap-3">
+            <StatCard label="评测次数" value={String(pronunciationRecords.length)} colorClass="text-blue-500" />
+            <StatCard label="平均发音分" value={pronunciationAverage ? String(pronunciationAverage) : '--'} colorClass="text-violet-500" />
+          </div>
+        </div>
+
+        {latestPronunciation ? (
+          <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr] gap-6">
+            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2">Latest Assessment</div>
+              <div className="font-bold text-slate-800">{latestPronunciation.sentenceText}</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
+                <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                  <div className="text-xs text-slate-400">发音</div>
+                  <div className="text-xl font-black text-slate-800 mt-1">{latestPronunciation.pronunciationScore}</div>
+                </div>
+                <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                  <div className="text-xs text-slate-400">准确度</div>
+                  <div className="text-xl font-black text-slate-800 mt-1">{latestPronunciation.accuracyScore}</div>
+                </div>
+                <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                  <div className="text-xs text-slate-400">流利度</div>
+                  <div className="text-xl font-black text-slate-800 mt-1">{latestPronunciation.fluencyScore}</div>
+                </div>
+                <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                  <div className="text-xs text-slate-400">完整度</div>
+                  <div className="text-xl font-black text-slate-800 mt-1">{latestPronunciation.completenessScore}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">待优先回练词</div>
+              {latestPronunciation.weakWords.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {latestPronunciation.weakWords.map((word) => (
+                    <span key={word} className="px-3 py-2 rounded-xl bg-rose-50 border border-rose-100 text-rose-700 text-sm font-bold">
+                      {word}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">最近一次评测里没有明显低分词，可以继续提高流利度和语音自然度。</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5 text-sm text-slate-500">
+            还没有 Azure 发音评测记录。去教材页的“课文朗读训练”里点一次“Azure 发音评测”，这里就会开始累计数据。
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2344,6 +2447,7 @@ const VocabularyModule = ({
   onToggleSentenceFollowed,
   onCompleteStage,
   onCompleteGrammarExercise,
+  onAddPronunciationAssessment,
   onAddMistake,
 }: {
   units: UnitBundle[];
@@ -2356,6 +2460,7 @@ const VocabularyModule = ({
   onToggleSentenceFollowed: (sentenceId: string) => void;
   onCompleteStage: (stage: LessonStageKey) => void;
   onCompleteGrammarExercise: (exerciseId: string) => void;
+  onAddPronunciationAssessment: (record: Omit<PronunciationAssessmentRecord, 'id' | 'createdAt'>) => void;
   onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
 }) => {
   if (!currentUnit) {
@@ -2376,6 +2481,9 @@ const VocabularyModule = ({
   const [recognizedSentenceText, setRecognizedSentenceText] = useState('');
   const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
   const [recordingError, setRecordingError] = useState('');
+  const [azureAssessment, setAzureAssessment] = useState<AzurePronunciationResult | null>(null);
+  const [azureAssessmentError, setAzureAssessmentError] = useState('');
+  const [isAzureAssessing, setIsAzureAssessing] = useState(false);
   const [grammarDrafts, setGrammarDrafts] = useState<Record<string, string>>({});
   const [grammarFeedback, setGrammarFeedback] = useState<Record<string, string>>({});
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -2396,6 +2504,8 @@ const VocabularyModule = ({
     setRecognizedSentenceText('');
     setPronunciationScore(null);
     setRecordingError('');
+    setAzureAssessment(null);
+    setAzureAssessmentError('');
     setGrammarDrafts({});
     setGrammarFeedback({});
   }, [currentUnit.id]);
@@ -2404,6 +2514,8 @@ const VocabularyModule = ({
     setRecognizedSentenceText('');
     setPronunciationScore(null);
     setRecordingError('');
+    setAzureAssessment(null);
+    setAzureAssessmentError('');
     if (recordedSentenceUrl) {
       URL.revokeObjectURL(recordedSentenceUrl);
       setRecordedSentenceUrl('');
@@ -2521,6 +2633,121 @@ const VocabularyModule = ({
     } catch (error) {
       setRecordingError('当前浏览器无法开启麦克风，请检查麦克风权限。');
       setIsRecordingSentence(false);
+    }
+  };
+
+  const handleAzurePronunciationAssessment = async () => {
+    if (!currentReadingSentence || isAzureAssessing) return;
+
+    setAzureAssessment(null);
+    setAzureAssessmentError('');
+    setIsAzureAssessing(true);
+
+    try {
+      const { token, region } = await apiFetch<SpeechTokenResponse>('/api/speech-token');
+      const SpeechSDK = await import('microsoft-cognitiveservices-speech-sdk');
+      const speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
+      speechConfig.speechRecognitionLanguage = 'en-US';
+
+      const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+      const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
+      const pronunciationConfig = new SpeechSDK.PronunciationAssessmentConfig(
+        currentReadingSentence.text,
+        SpeechSDK.PronunciationAssessmentGradingSystem.HundredMark,
+        SpeechSDK.PronunciationAssessmentGranularity.Phoneme,
+        true
+      );
+      pronunciationConfig.applyTo(recognizer);
+
+      const result = await new Promise<any>((resolve, reject) => {
+        recognizer.recognizeOnceAsync(
+          (sdkResult: any) => resolve(sdkResult),
+          (sdkError: any) => reject(sdkError)
+        );
+      });
+
+      recognizer.close();
+
+      const jsonResult = result.properties?.getProperty(
+        SpeechSDK.PropertyId.SpeechServiceResponse_JsonResult
+      );
+      const parsed = jsonResult ? JSON.parse(jsonResult) : null;
+      const bestResult = parsed?.NBest?.[0] || {};
+      const assessment = bestResult?.PronunciationAssessment || {};
+      const words: AzurePronunciationWord[] = (bestResult?.Words || []).map((item: any) => ({
+        word: String(item.Word || ''),
+        accuracyScore: Number(item.PronunciationAssessment?.AccuracyScore || 0),
+        errorType: String(item.PronunciationAssessment?.ErrorType || 'None'),
+      }));
+
+      const lowWords = words
+        .filter((item) => item.accuracyScore < 70)
+        .map((item) => `${item.word}(${Math.round(item.accuracyScore)})`);
+
+      const feedback: string[] = [];
+      const pronunciationValue = Number(assessment?.PronScore || 0);
+      const accuracyValue = Number(assessment?.AccuracyScore || 0);
+      const fluencyValue = Number(assessment?.FluencyScore || 0);
+      const completenessValue = Number(assessment?.CompletenessScore || 0);
+
+      feedback.push(
+        pronunciationValue >= 85
+          ? '整体发音比较稳定，可以继续提高语流自然度。'
+          : pronunciationValue >= 70
+            ? '整体读音基本到位，建议重点回练低分单词。'
+            : '整体发音还有提升空间，建议先慢速跟读再重新测。'
+      );
+
+      if (lowWords.length > 0) {
+        feedback.push(`建议优先回练：${lowWords.slice(0, 3).join('、')}`);
+      }
+
+      if (fluencyValue < 70) {
+        feedback.push('流利度偏弱，建议按意群停顿后再完整朗读一遍。');
+      }
+
+      if (completenessValue < 85) {
+        feedback.push('句子完整度不足，建议确保整句都读完。');
+      }
+
+      const nextAssessment: AzurePronunciationResult = {
+        pronunciationScore: Math.round(pronunciationValue),
+        accuracyScore: Math.round(accuracyValue),
+        fluencyScore: Math.round(fluencyValue),
+        completenessScore: Math.round(completenessValue),
+        words,
+        feedback,
+      };
+
+      setAzureAssessment(nextAssessment);
+      onAddPronunciationAssessment({
+        unitId: currentUnit.id,
+        sentenceId: currentReadingSentence.id,
+        sentenceText: currentReadingSentence.text,
+        pronunciationScore: nextAssessment.pronunciationScore,
+        accuracyScore: nextAssessment.accuracyScore,
+        fluencyScore: nextAssessment.fluencyScore,
+        completenessScore: nextAssessment.completenessScore,
+        weakWords: words.filter((item) => item.accuracyScore < 70).map((item) => item.word),
+      });
+
+      if (nextAssessment.pronunciationScore < 75 || lowWords.length > 0) {
+        onAddMistake({
+          unitId: currentUnit.id,
+          category: 'speaking',
+          stage: 'reading',
+          prompt: currentReadingSentence.text,
+          expected: currentReadingSentence.text,
+          answer: lowWords.join(', ') || 'Azure 评测分数偏低',
+          translation: currentReadingSentence.translation,
+          reason: 'pronunciation',
+          hint: feedback[1] || feedback[0],
+        });
+      }
+    } catch (error) {
+      setAzureAssessmentError(error instanceof Error ? error.message : 'Azure 发音评测失败');
+    } finally {
+      setIsAzureAssessing(false);
     }
   };
 
@@ -3042,6 +3269,18 @@ const VocabularyModule = ({
                   {isRecordingSentence ? '停止录音并评测' : '开始录音跟读'}
                 </button>
                 <button
+                  onClick={handleAzurePronunciationAssessment}
+                  disabled={isAzureAssessing}
+                  className={cn(
+                    "px-4 py-3 rounded-2xl text-sm font-bold",
+                    isAzureAssessing
+                      ? "bg-slate-200 text-slate-500"
+                      : "bg-blue-500 text-white"
+                  )}
+                >
+                  {isAzureAssessing ? 'Azure 评测中...' : 'Azure 发音评测'}
+                </button>
+                <button
                   onClick={() => {
                     onToggleSentenceFollowed(currentReadingSentence.id);
                     if (readingIndex < currentUnit.sentences.length - 1) {
@@ -3116,6 +3355,83 @@ const VocabularyModule = ({
                   {recordingError && (
                     <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">
                       {recordingError}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(azureAssessment || azureAssessmentError) && (
+                <div className="mt-6 rounded-2xl bg-white border border-slate-100 p-4 space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-400 mb-1">Azure 发音评测</div>
+                      <div className="text-sm text-slate-600">基于参考句进行准确度、流利度和完整度评测。</div>
+                    </div>
+                    {azureAssessment && (
+                      <div className="px-3 py-2 rounded-xl bg-blue-50 text-blue-600 text-sm font-bold">
+                        总分 {azureAssessment.pronunciationScore}
+                      </div>
+                    )}
+                  </div>
+
+                  {azureAssessment && (
+                    <>
+                      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                          <div className="text-xs text-slate-400">发音总分</div>
+                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.pronunciationScore}</div>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                          <div className="text-xs text-slate-400">准确度</div>
+                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.accuracyScore}</div>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                          <div className="text-xs text-slate-400">流利度</div>
+                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.fluencyScore}</div>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                          <div className="text-xs text-slate-400">完整度</div>
+                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.completenessScore}</div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                          <div className="text-xs font-bold text-slate-400 mb-3">逐词反馈</div>
+                          <div className="flex flex-wrap gap-2">
+                            {azureAssessment.words.map((word) => (
+                              <span
+                                key={`${word.word}-${word.accuracyScore}`}
+                                className={cn(
+                                  "px-3 py-2 rounded-xl text-sm font-bold border",
+                                  word.accuracyScore >= 85
+                                    ? "bg-emerald-50 border-emerald-100 text-emerald-700"
+                                    : word.accuracyScore >= 70
+                                      ? "bg-amber-50 border-amber-100 text-amber-700"
+                                      : "bg-rose-50 border-rose-100 text-rose-700"
+                                )}
+                              >
+                                {word.word} {Math.round(word.accuracyScore)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                          <div className="text-xs font-bold text-slate-400 mb-3">学习建议</div>
+                          <div className="space-y-2">
+                            {azureAssessment.feedback.map((item) => (
+                              <div key={item} className="text-sm text-slate-600">• {item}</div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {azureAssessmentError && (
+                    <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">
+                      {azureAssessmentError}
                     </div>
                   )}
                 </div>
@@ -4713,6 +5029,20 @@ export default function App() {
     }));
   };
 
+  const handleAddPronunciationAssessment = (record: Omit<PronunciationAssessmentRecord, 'id' | 'createdAt'>) => {
+    setStudyState((prev) => ({
+      ...prev,
+      pronunciationAssessments: [
+        {
+          ...record,
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          createdAt: new Date().toISOString(),
+        },
+        ...prev.pronunciationAssessments.filter((item) => item.sentenceId !== record.sentenceId),
+      ].slice(0, 30),
+    }));
+  };
+
   const handleAddMistake = (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => {
     setStudyState((prev) => ({
       ...prev,
@@ -5016,6 +5346,7 @@ export default function App() {
                   onToggleSentenceFollowed={handleToggleSentenceFollowed}
                   onCompleteStage={handleCompleteStage}
                   onCompleteGrammarExercise={handleCompleteGrammarExercise}
+                  onAddPronunciationAssessment={handleAddPronunciationAssessment}
                   onAddMistake={handleAddMistake}
                 />
               )}

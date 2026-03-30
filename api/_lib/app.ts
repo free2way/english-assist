@@ -20,6 +20,9 @@ export const app = express();
 
 app.use(express.json());
 
+const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY?.trim();
+const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION?.trim();
+
 const getBearerToken = (header?: string) => {
   if (!header?.startsWith('Bearer ')) return null;
   return header.slice('Bearer '.length).trim();
@@ -59,6 +62,40 @@ const requireAdmin = (req: express.Request, res: express.Response, next: express
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, driver: 'turso-libsql' });
+});
+
+app.get('/api/speech-token', requireAuth, async (_req, res) => {
+  if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
+    res.status(503).json({ error: 'Azure Speech 未配置，请设置 AZURE_SPEECH_KEY 和 AZURE_SPEECH_REGION' });
+    return;
+  }
+
+  try {
+    const response = await fetch(`https://${AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/sts/v1.0/issueToken`, {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
+        'Content-Length': '0',
+      },
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      res.status(502).json({ error: `Azure Speech token 获取失败: ${message || response.statusText}` });
+      return;
+    }
+
+    const token = await response.text();
+    res.json({
+      token,
+      region: AZURE_SPEECH_REGION,
+      expiresInSeconds: 600,
+    });
+  } catch (error) {
+    res.status(502).json({
+      error: error instanceof Error ? error.message : 'Azure Speech token 获取失败',
+    });
+  }
 });
 
 app.post('/api/auth/login', async (req, res) => {
