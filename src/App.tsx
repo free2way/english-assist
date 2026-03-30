@@ -44,6 +44,14 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
+import { TextbookModule } from './components/textbook/TextbookModule';
+import {
+  createTaskId,
+  getLessonOutcomeLabel,
+  getPronunciationHint,
+  getStageLabel,
+  normalizeGrammarAnswer,
+} from './components/textbook/helpers';
 import { 
   BarChart, 
   Bar, 
@@ -198,6 +206,21 @@ interface AzurePronunciationResult {
 }
 
 type LessonStageKey = 'preview' | 'reading' | 'dictation' | 'speaking';
+type TextbookPageKey = 'overview' | 'preview' | 'sentences' | 'grammar' | 'reading-practice';
+type AppTabKey =
+  | 'dashboard'
+  | 'textbook-overview'
+  | 'textbook-preview'
+  | 'textbook-sentences'
+  | 'textbook-grammar'
+  | 'textbook-reading'
+  | 'dictation'
+  | 'tutor'
+  | 'stats'
+  | 'profile'
+  | 'challenge'
+  | 'manage'
+  | 'exam';
 type MistakeCategory = 'vocab' | 'dictation' | 'speaking' | 'grammar';
 type MistakeReason =
   | 'unknown_vocab'
@@ -390,17 +413,8 @@ const UNIT_TITLE_MAP: Record<string, string> = {
   '7年级-下学期-Unit 2': 'What can you do?',
 };
 
-const createTaskId = (unitId: string, stage: LessonStageKey) => `${unitId}:${stage}`;
-
 const getStudyStorageKey = (username: string, textbookId: string) => `${STUDY_STATE_STORAGE_PREFIX}:${username}:${textbookId}`;
 const getSelectedTextbookStorageKey = (username: string) => `ace_selected_textbook:${username}`;
-
-const normalizeGrammarAnswer = (value: string) =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/[.,!?;:]/g, '')
-    .replace(/\s+/g, ' ');
 
 const buildGrammarExamples = (
   patterns: Array<{ text: string; translation: string }> | undefined,
@@ -823,34 +837,6 @@ const MISTAKE_REASON_LABELS: Record<MistakeReason, string> = {
   sentence_judgement: '正误判断',
 };
 
-const getStageLabel = (stage: LessonStageKey) =>
-  stage === 'preview' ? '课时1 词汇预习' :
-  stage === 'reading' ? '课时2 重点句跟读' :
-  stage === 'dictation' ? '课时3 听写巩固' :
-  '课时4 口语表达';
-
-const getLessonOutcomeLabel = (unit: UnitBundle | null, stage: LessonStageKey, studyState: StudyState) => {
-  if (!unit) return '暂无课时数据';
-
-  if (stage === 'preview') {
-    const mastered = unit.vocab.filter((word) => studyState.masteredWordIds.includes(word.id)).length;
-    return `已掌握 ${mastered}/${unit.vocab.length || 0} 个核心词汇`;
-  }
-
-  if (stage === 'reading') {
-    const followed = unit.sentences.filter((sentence) => studyState.followedSentenceIds.includes(sentence.id)).length;
-    return `已完成 ${followed}/${unit.sentences.length || 0} 句重点句跟读`;
-  }
-
-  if (stage === 'dictation') {
-    const count = studyState.mistakes.filter((item) => item.stage === 'dictation' && item.unitId === unit.id).length;
-    return count > 0 ? `待复盘 ${count} 条听写问题` : '本单元听写表现稳定';
-  }
-
-  const count = studyState.mistakes.filter((item) => item.stage === 'speaking' && item.unitId === unit.id).length;
-  return count > 0 ? `待优化 ${count} 条口语反馈` : '口语输出已形成基本闭环';
-};
-
 const classifyDictationIssue = (input: string, target: string) => {
   const cleanedInput = input.trim();
   const cleanedTarget = target.trim();
@@ -935,27 +921,6 @@ const normalizeEnglishText = (text: string) =>
     .replace(/[.,!?;:'"]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-
-const calculateTextSimilarity = (input: string, target: string) => {
-  const normalizedInput = normalizeEnglishText(input);
-  const normalizedTarget = normalizeEnglishText(target);
-
-  if (!normalizedInput || !normalizedTarget) return 0;
-  if (normalizedInput === normalizedTarget) return 100;
-
-  const inputWords = normalizedInput.split(' ');
-  const targetWords = normalizedTarget.split(' ');
-  const matchedWords = targetWords.filter((word) => inputWords.includes(word)).length;
-  const ratio = matchedWords / Math.max(targetWords.length, 1);
-  return Math.max(0, Math.min(100, Math.round(ratio * 100)));
-};
-
-const getPronunciationHint = (score: number) => {
-  if (score >= 90) return '发音和内容都比较接近原句，可以继续保持这个节奏。';
-  if (score >= 70) return '整体不错，建议再注意连读、重音和停顿，让句子更完整自然。';
-  if (score >= 50) return '能说出部分关键词，建议先听一句、跟一句，再完整复述。';
-  return '和目标句差距还比较大，建议先慢速播放原句，再分段录音练习。';
-};
 
 const getWeaknessSummary = (studyState: StudyState) => {
   const counters = {
@@ -2436,1063 +2401,6 @@ const AITutor = ({
   );
 };
 
-const VocabularyModule = ({
-  units,
-  currentUnit,
-  studyState,
-  onSelectUnit,
-  onSelectStage,
-  onOpenStage,
-  onMarkWord,
-  onToggleSentenceFollowed,
-  onCompleteStage,
-  onCompleteGrammarExercise,
-  onAddPronunciationAssessment,
-  onAddMistake,
-}: {
-  units: UnitBundle[];
-  currentUnit: UnitBundle | null;
-  studyState: StudyState;
-  onSelectUnit: (unitId: string) => void;
-  onSelectStage: (stage: LessonStageKey) => void;
-  onOpenStage: (stage: LessonStageKey) => void;
-  onMarkWord: (wordId: string, mastered: boolean, word: VocabItem) => void;
-  onToggleSentenceFollowed: (sentenceId: string) => void;
-  onCompleteStage: (stage: LessonStageKey) => void;
-  onCompleteGrammarExercise: (exerciseId: string) => void;
-  onAddPronunciationAssessment: (record: Omit<PronunciationAssessmentRecord, 'id' | 'createdAt'>) => void;
-  onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
-}) => {
-  if (!currentUnit) {
-    return (
-      <div className="py-20 text-center text-slate-300">
-        <BookOpen size={48} className="mx-auto mb-4 opacity-20" />
-        <p>当前账号暂无教材数据</p>
-      </div>
-    );
-  }
-
-  const masteredCount = currentUnit.vocab.filter((word) => studyState.masteredWordIds.includes(word.id)).length;
-  const followedCount = currentUnit.sentences.filter((sentence) => studyState.followedSentenceIds.includes(sentence.id)).length;
-  const [readingIndex, setReadingIndex] = useState(0);
-  const [focusStage, setFocusStage] = useState<LessonStageKey | null>(null);
-  const [isRecordingSentence, setIsRecordingSentence] = useState(false);
-  const [recordedSentenceUrl, setRecordedSentenceUrl] = useState('');
-  const [recognizedSentenceText, setRecognizedSentenceText] = useState('');
-  const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
-  const [recordingError, setRecordingError] = useState('');
-  const [azureAssessment, setAzureAssessment] = useState<AzurePronunciationResult | null>(null);
-  const [azureAssessmentError, setAzureAssessmentError] = useState('');
-  const [isAzureAssessing, setIsAzureAssessing] = useState(false);
-  const [grammarDrafts, setGrammarDrafts] = useState<Record<string, string>>({});
-  const [grammarFeedback, setGrammarFeedback] = useState<Record<string, string>>({});
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const speechRecognitionRef = useRef<any>(null);
-  const previewSectionRef = useRef<HTMLDivElement>(null);
-  const readingSectionRef = useRef<HTMLDivElement>(null);
-  const currentReadingSentence = currentUnit.sentences[readingIndex] || currentUnit.sentences[0];
-  const previewCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'preview'));
-  const readingCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'reading'));
-  const completedGrammarCount = currentUnit.grammar.exercises.filter((exercise) => studyState.completedGrammarQuestionIds.includes(exercise.id)).length;
-  const grammarCompleted = completedGrammarCount === currentUnit.grammar.exercises.length;
-
-  useEffect(() => {
-    setReadingIndex(0);
-    setRecordedSentenceUrl('');
-    setRecognizedSentenceText('');
-    setPronunciationScore(null);
-    setRecordingError('');
-    setAzureAssessment(null);
-    setAzureAssessmentError('');
-    setGrammarDrafts({});
-    setGrammarFeedback({});
-  }, [currentUnit.id]);
-
-  useEffect(() => {
-    setRecognizedSentenceText('');
-    setPronunciationScore(null);
-    setRecordingError('');
-    setAzureAssessment(null);
-    setAzureAssessmentError('');
-    if (recordedSentenceUrl) {
-      URL.revokeObjectURL(recordedSentenceUrl);
-      setRecordedSentenceUrl('');
-    }
-  }, [readingIndex]);
-
-  useEffect(() => {
-    if (!focusStage) return;
-    const timer = window.setTimeout(() => setFocusStage(null), 1800);
-    return () => window.clearTimeout(timer);
-  }, [focusStage]);
-
-  useEffect(() => {
-    if (!currentReadingSentence || pronunciationScore === null || pronunciationScore >= 70) return;
-    onAddMistake({
-      unitId: currentUnit.id,
-      category: 'speaking',
-      stage: 'reading',
-      prompt: currentReadingSentence.text,
-      expected: currentReadingSentence.text,
-      answer: recognizedSentenceText || '录音完成但识别较弱',
-      translation: currentReadingSentence.translation,
-      reason: 'pronunciation',
-      hint: getPronunciationHint(pronunciationScore),
-    });
-  }, [pronunciationScore]);
-
-  useEffect(() => {
-    return () => {
-      if (recordedSentenceUrl) {
-        URL.revokeObjectURL(recordedSentenceUrl);
-      }
-      mediaRecorderRef.current?.stop?.();
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-      speechRecognitionRef.current?.stop?.();
-    };
-  }, [recordedSentenceUrl]);
-
-  const stopReadingPractice = () => {
-    mediaRecorderRef.current?.stop?.();
-    speechRecognitionRef.current?.stop?.();
-    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-    mediaStreamRef.current = null;
-    setIsRecordingSentence(false);
-  };
-
-  const handleToggleSentenceRecording = async () => {
-    if (!currentReadingSentence) return;
-
-    if (isRecordingSentence) {
-      stopReadingPractice();
-      return;
-    }
-
-    try {
-      setRecordingError('');
-      setRecognizedSentenceText('');
-      setPronunciationScore(null);
-      if (recordedSentenceUrl) {
-        URL.revokeObjectURL(recordedSentenceUrl);
-        setRecordedSentenceUrl('');
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      recordedChunksRef.current = [];
-
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
-        }
-      };
-      recorder.onstop = () => {
-        if (recordedChunksRef.current.length > 0) {
-          const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
-          const url = URL.createObjectURL(blob);
-          setRecordedSentenceUrl(url);
-        }
-      };
-      recorder.start();
-
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        speechRecognitionRef.current = recognition;
-        recognition.lang = 'en-US';
-        recognition.continuous = false;
-        recognition.interimResults = true;
-        recognition.maxAlternatives = 1;
-        recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
-            .map((result: any) => result[0]?.transcript || '')
-            .join(' ')
-            .trim();
-          setRecognizedSentenceText(transcript);
-          if (event.results[0]?.isFinal) {
-            const score = calculateTextSimilarity(transcript, currentReadingSentence.text);
-            setPronunciationScore(score);
-          }
-        };
-        recognition.onerror = () => {
-          setRecordingError('录音已保存，但语音识别没有成功，你仍然可以回放自己的录音。');
-        };
-        recognition.onend = () => {
-          if (isRecordingSentence) {
-            setIsRecordingSentence(false);
-          }
-        };
-        recognition.start();
-      }
-
-      setIsRecordingSentence(true);
-    } catch (error) {
-      setRecordingError('当前浏览器无法开启麦克风，请检查麦克风权限。');
-      setIsRecordingSentence(false);
-    }
-  };
-
-  const handleAzurePronunciationAssessment = async () => {
-    if (!currentReadingSentence || isAzureAssessing) return;
-
-    setAzureAssessment(null);
-    setAzureAssessmentError('');
-    setIsAzureAssessing(true);
-
-    try {
-      const { token, region } = await apiFetch<SpeechTokenResponse>('/api/speech-token');
-      const SpeechSDK = await import('microsoft-cognitiveservices-speech-sdk');
-      const speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
-      speechConfig.speechRecognitionLanguage = 'en-US';
-
-      const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
-      const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
-      const pronunciationConfig = new SpeechSDK.PronunciationAssessmentConfig(
-        currentReadingSentence.text,
-        SpeechSDK.PronunciationAssessmentGradingSystem.HundredMark,
-        SpeechSDK.PronunciationAssessmentGranularity.Phoneme,
-        true
-      );
-      pronunciationConfig.applyTo(recognizer);
-
-      const result = await new Promise<any>((resolve, reject) => {
-        recognizer.recognizeOnceAsync(
-          (sdkResult: any) => resolve(sdkResult),
-          (sdkError: any) => reject(sdkError)
-        );
-      });
-
-      recognizer.close();
-
-      const jsonResult = result.properties?.getProperty(
-        SpeechSDK.PropertyId.SpeechServiceResponse_JsonResult
-      );
-      const parsed = jsonResult ? JSON.parse(jsonResult) : null;
-      const bestResult = parsed?.NBest?.[0] || {};
-      const assessment = bestResult?.PronunciationAssessment || {};
-      const words: AzurePronunciationWord[] = (bestResult?.Words || []).map((item: any) => ({
-        word: String(item.Word || ''),
-        accuracyScore: Number(item.PronunciationAssessment?.AccuracyScore || 0),
-        errorType: String(item.PronunciationAssessment?.ErrorType || 'None'),
-      }));
-
-      const lowWords = words
-        .filter((item) => item.accuracyScore < 70)
-        .map((item) => `${item.word}(${Math.round(item.accuracyScore)})`);
-
-      const feedback: string[] = [];
-      const pronunciationValue = Number(assessment?.PronScore || 0);
-      const accuracyValue = Number(assessment?.AccuracyScore || 0);
-      const fluencyValue = Number(assessment?.FluencyScore || 0);
-      const completenessValue = Number(assessment?.CompletenessScore || 0);
-
-      feedback.push(
-        pronunciationValue >= 85
-          ? '整体发音比较稳定，可以继续提高语流自然度。'
-          : pronunciationValue >= 70
-            ? '整体读音基本到位，建议重点回练低分单词。'
-            : '整体发音还有提升空间，建议先慢速跟读再重新测。'
-      );
-
-      if (lowWords.length > 0) {
-        feedback.push(`建议优先回练：${lowWords.slice(0, 3).join('、')}`);
-      }
-
-      if (fluencyValue < 70) {
-        feedback.push('流利度偏弱，建议按意群停顿后再完整朗读一遍。');
-      }
-
-      if (completenessValue < 85) {
-        feedback.push('句子完整度不足，建议确保整句都读完。');
-      }
-
-      const nextAssessment: AzurePronunciationResult = {
-        pronunciationScore: Math.round(pronunciationValue),
-        accuracyScore: Math.round(accuracyValue),
-        fluencyScore: Math.round(fluencyValue),
-        completenessScore: Math.round(completenessValue),
-        words,
-        feedback,
-      };
-
-      setAzureAssessment(nextAssessment);
-      onAddPronunciationAssessment({
-        unitId: currentUnit.id,
-        sentenceId: currentReadingSentence.id,
-        sentenceText: currentReadingSentence.text,
-        pronunciationScore: nextAssessment.pronunciationScore,
-        accuracyScore: nextAssessment.accuracyScore,
-        fluencyScore: nextAssessment.fluencyScore,
-        completenessScore: nextAssessment.completenessScore,
-        weakWords: words.filter((item) => item.accuracyScore < 70).map((item) => item.word),
-      });
-
-      if (nextAssessment.pronunciationScore < 75 || lowWords.length > 0) {
-        onAddMistake({
-          unitId: currentUnit.id,
-          category: 'speaking',
-          stage: 'reading',
-          prompt: currentReadingSentence.text,
-          expected: currentReadingSentence.text,
-          answer: lowWords.join(', ') || 'Azure 评测分数偏低',
-          translation: currentReadingSentence.translation,
-          reason: 'pronunciation',
-          hint: feedback[1] || feedback[0],
-        });
-      }
-    } catch (error) {
-      setAzureAssessmentError(error instanceof Error ? error.message : 'Azure 发音评测失败');
-    } finally {
-      setIsAzureAssessing(false);
-    }
-  };
-
-  const handleGrammarChoice = (exercise: GrammarExercise, option: string) => {
-    if (normalizeGrammarAnswer(option) === normalizeGrammarAnswer(exercise.answer)) {
-      onCompleteGrammarExercise(exercise.id);
-      setGrammarFeedback((prev) => ({
-        ...prev,
-        [exercise.id]: `回答正确：${exercise.explanation}`,
-      }));
-      return;
-    }
-
-    setGrammarFeedback((prev) => ({
-      ...prev,
-      [exercise.id]: `还不对：${exercise.explanation}`,
-    }));
-
-    onAddMistake({
-      unitId: currentUnit.id,
-      category: 'grammar',
-      stage: 'reading',
-      prompt: `${exercise.prompt}：${exercise.question}`,
-      expected: exercise.answer,
-      answer: option,
-      reason: exercise.type === 'judge' ? 'sentence_judgement' : 'grammar_rule',
-      hint: exercise.explanation,
-    });
-  };
-
-  const handleGrammarFill = (exercise: GrammarExercise) => {
-    const answer = normalizeGrammarAnswer(grammarDrafts[exercise.id] || '');
-    if (!answer) {
-      setGrammarFeedback((prev) => ({
-        ...prev,
-        [exercise.id]: '先输入答案再提交。',
-      }));
-      return;
-    }
-
-    if (answer === normalizeGrammarAnswer(exercise.answer)) {
-      onCompleteGrammarExercise(exercise.id);
-      setGrammarFeedback((prev) => ({
-        ...prev,
-        [exercise.id]: `回答正确：${exercise.explanation}`,
-      }));
-      return;
-    }
-
-    setGrammarFeedback((prev) => ({
-      ...prev,
-      [exercise.id]: `还不对：${exercise.explanation}`,
-    }));
-
-    onAddMistake({
-      unitId: currentUnit.id,
-      category: 'grammar',
-      stage: 'reading',
-      prompt: `${exercise.prompt}：${exercise.question}`,
-      expected: exercise.answer,
-      answer: grammarDrafts[exercise.id] || '',
-      reason: exercise.type === 'reorder' ? 'word_order' : 'grammar_rule',
-      hint: exercise.explanation,
-    });
-  };
-
-  return (
-    <div className="space-y-6 pb-20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">教材同步路径</h2>
-          <p className="text-sm text-slate-500">{currentUnit.grade} {currentUnit.semester} · {currentUnit.unit} · {currentUnit.title}</p>
-        </div>
-        <div className="flex gap-3">
-          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-blue-600">
-            已掌握单词 {masteredCount}/{currentUnit.vocab.length}
-          </div>
-          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-purple-600">
-            已跟读句子 {followedCount}/{currentUnit.sentences.length}
-          </div>
-          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-violet-600">
-            语法练习 {completedGrammarCount}/{currentUnit.grammar.exercises.length}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-slate-800">选择单元</h3>
-          <span className="text-xs text-slate-400">按课时推进学习</span>
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-          {units.map((unit) => (
-            <button
-              key={unit.id}
-              onClick={() => onSelectUnit(unit.id)}
-              className={cn(
-                "px-4 py-3 rounded-2xl border text-left min-w-[180px] transition-all",
-                currentUnit.id === unit.id
-                  ? "border-blue-200 bg-blue-50"
-                  : "border-slate-100 bg-slate-50 hover:border-slate-200"
-              )}
-            >
-              <div className="text-xs text-slate-400">{unit.unit}</div>
-              <div className="font-bold text-slate-800">{unit.title}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {currentUnit.stages.map((stage, index) => {
-          const completed = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, stage.key));
-          return (
-            <button
-              key={stage.key}
-              onClick={() => onSelectStage(stage.key)}
-              className={cn(
-                "rounded-3xl border p-5 text-left transition-all",
-                studyState.currentStage === stage.key
-                  ? "border-blue-200 bg-blue-50"
-                  : "border-slate-100 bg-white hover:border-slate-200",
-              )}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Lesson {index + 1}</span>
-                {completed ? <Check size={16} className="text-emerald-500" /> : <Clock size={16} className="text-slate-300" />}
-              </div>
-              <div className="font-bold text-slate-800">{stage.title}</div>
-              <p className="text-xs text-slate-500 mt-2">{stage.description}</p>
-              <div className="text-[10px] text-slate-400 mt-3">{stage.estimatedMinutes} 分钟</div>
-              <div className="text-[11px] text-slate-400 mt-2">{getLessonOutcomeLabel(currentUnit, stage.key, studyState)}</div>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {currentUnit.stages.map((stage) => (
-          <div key={`${stage.key}-goal`} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-500 mb-2">{getStageLabel(stage.key)}</div>
-            <div className="font-bold text-slate-800">{stage.description}</div>
-            <div className="text-xs text-slate-500 mt-2">{getLessonOutcomeLabel(currentUnit, stage.key, studyState)}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
-        <div
-          ref={previewSectionRef}
-          className={cn(
-            "bg-white rounded-3xl p-6 shadow-sm border transition-all",
-            focusStage === 'preview' ? "border-blue-300 ring-4 ring-blue-500/10" : "border-slate-100"
-          )}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-slate-800">课时1 词汇预习</h3>
-            <button
-              onClick={() => onSelectStage('preview')}
-              className="text-xs font-bold text-blue-500"
-            >
-              设为当前课时
-            </button>
-          </div>
-          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-            {currentUnit.vocab.slice(0, 12).map((word) => {
-              const mastered = studyState.masteredWordIds.includes(word.id);
-              return (
-                <div key={word.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-bold text-slate-800">{word.word}</div>
-                      <div className="text-xs text-slate-400 font-mono">{word.phonetic}</div>
-                      <div className="text-sm text-slate-600 mt-1">{word.definition}</div>
-                      <div className="text-xs text-slate-500 mt-2 italic">"{word.example}"</div>
-                    </div>
-                    <button
-                      onClick={() => playWordAudio(word.word, 'US')}
-                      className="w-10 h-10 rounded-xl bg-white text-blue-500 flex items-center justify-center border border-slate-100"
-                    >
-                      <Volume2 size={18} />
-                    </button>
-                  </div>
-                  <div className="flex gap-2 mt-4">
-                    <button
-                      onClick={() => {
-                        onMarkWord(word.id, false, word);
-                        onAddMistake({
-                          unitId: currentUnit.id,
-                          category: 'vocab',
-                          stage: 'preview',
-                          prompt: word.word,
-                          expected: word.definition,
-                          answer: '未掌握',
-                          reason: 'unknown_vocab',
-                          hint: '建议先听发音，再结合例句确认词义和用法。',
-                        });
-                      }}
-                      className="flex-1 py-2 rounded-xl bg-white border border-slate-100 text-slate-500 text-xs font-bold"
-                    >
-                      还不熟
-                    </button>
-                    <button
-                      onClick={() => onMarkWord(word.id, true, word)}
-                      className={cn(
-                        "flex-1 py-2 rounded-xl text-xs font-bold",
-                        mastered ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-600 border border-emerald-100"
-                      )}
-                    >
-                      {mastered ? '已掌握' : '标记掌握'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <button
-            onClick={() => {
-              onCompleteStage('preview');
-              onSelectStage('reading');
-              readingSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              setFocusStage('reading');
-            }}
-            className={cn(
-              "mt-4 w-full py-3 rounded-2xl text-white font-bold",
-              previewCompleted ? "bg-emerald-500" : "bg-blue-500"
-            )}
-          >
-            {previewCompleted ? '词汇预习已完成，继续课时2' : '完成词汇预习并进入课时2'}
-          </button>
-        </div>
-
-        <div
-          ref={readingSectionRef}
-          className={cn(
-            "bg-white rounded-3xl p-6 shadow-sm border transition-all",
-            focusStage === 'reading' ? "border-purple-300 ring-4 ring-purple-500/10" : "border-slate-100"
-          )}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-slate-800">课时2 重点句跟读</h3>
-            <button
-              onClick={() => onSelectStage('reading')}
-              className="text-xs font-bold text-blue-500"
-            >
-              设为当前课时
-            </button>
-          </div>
-          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-            {currentUnit.sentences.map((sentence) => {
-              const followed = studyState.followedSentenceIds.includes(sentence.id);
-              return (
-                <div key={sentence.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <div className="font-bold text-slate-800">{sentence.text}</div>
-                  <div className="text-sm text-slate-500 mt-1">{sentence.translation}</div>
-                  <div className="flex gap-2 mt-4">
-                    <button
-                      onClick={() => playWordAudio(sentence.text, 'US')}
-                      className="px-4 py-2 rounded-xl bg-white border border-slate-100 text-blue-500 text-xs font-bold"
-                    >
-                      播放跟读
-                    </button>
-                    <button
-                      onClick={() => onToggleSentenceFollowed(sentence.id)}
-                      className={cn(
-                        "px-4 py-2 rounded-xl text-xs font-bold",
-                        followed ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-600 border border-emerald-100"
-                      )}
-                    >
-                      {followed ? '已完成跟读' : '标记已跟读'}
-                    </button>
-                    <button
-                      onClick={() => onAddMistake({
-                        unitId: currentUnit.id,
-                        category: 'speaking',
-                        stage: 'reading',
-                        prompt: sentence.text,
-                        expected: '读准重音、连读和停顿',
-                        answer: '需要纠音',
-                        translation: sentence.translation,
-                        reason: 'pronunciation',
-                        hint: '先逐词听一遍，再完整跟读一遍，重点注意重音和停顿。',
-                      })}
-                      className="px-4 py-2 rounded-xl bg-white border border-amber-200 text-amber-600 text-xs font-bold"
-                    >
-                      需要纠音
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <button
-            onClick={() => {
-              onCompleteStage('reading');
-              onOpenStage('dictation');
-            }}
-            className={cn(
-              "mt-4 w-full py-3 rounded-2xl text-white font-bold",
-              readingCompleted ? "bg-emerald-500" : "bg-purple-500"
-            )}
-          >
-            {readingCompleted ? '重点句跟读已完成，继续听写' : '完成重点句跟读并进入听写'}
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
-        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-          <h3 className="font-bold text-slate-800 mb-4">课文内容</h3>
-          <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
-            <p className="text-sm text-slate-600 leading-7">
-              {currentUnit.passage || currentUnit.sentences.slice(0, 5).map((sentence) => sentence.text).join(' ')}
-            </p>
-          </div>
-          <p className="text-xs text-slate-400 mt-3">
-            建议先通读课文，再回到上方依次完成词汇预习和重点句跟读。
-          </p>
-        </div>
-
-        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-          <h3 className="font-bold text-slate-800 mb-4">重点句型</h3>
-          <div className="space-y-3">
-            {(currentUnit.patterns && currentUnit.patterns.length > 0 ? currentUnit.patterns : currentUnit.sentences.slice(0, 4)).map((sentence, index) => (
-              <div key={sentence.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-500 mb-2">Pattern {index + 1}</div>
-                <div className="font-bold text-slate-800">{sentence.text}</div>
-                <div className="text-sm text-slate-500 mt-1">{sentence.translation}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {currentUnit.phrases && currentUnit.phrases.length > 0 && (
-        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-          <h3 className="font-bold text-slate-800 mb-4">固定搭配</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {currentUnit.phrases.map((phrase) => (
-              <div key={phrase.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                <div className="font-bold text-slate-800">{phrase.phrase}</div>
-                <div className="text-sm text-slate-500 mt-1">{phrase.meaning}</div>
-                <div className="text-xs text-slate-400 mt-2">{phrase.example}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
-          <div>
-            <h3 className="font-bold text-slate-800">{currentUnit.grammar.title}</h3>
-            <p className="text-sm text-slate-500 mt-1">{currentUnit.grammar.focus}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <div className="px-4 py-2 rounded-2xl text-xs font-bold bg-slate-50 text-slate-600 border border-slate-100">
-              {currentUnit.grammar.sourceType === 'configured' ? '教材语法点已配置' : '语法点由教材内容自动生成'}
-            </div>
-            <div className={cn(
-              "px-4 py-2 rounded-2xl text-xs font-bold",
-              grammarCompleted ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-violet-50 text-violet-600 border border-violet-100"
-            )}>
-              {grammarCompleted ? '语法模块已完成' : `待完成 ${currentUnit.grammar.exercises.length - completedGrammarCount} 题`}
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-6">
-          <div className="space-y-4">
-            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-500 mb-2">Grammar Focus</div>
-              <p className="text-sm text-slate-600 leading-7">{currentUnit.grammar.summary}</p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">Key Tips</div>
-              <div className="space-y-2">
-                {currentUnit.grammar.tips.map((tip) => (
-                  <div key={tip} className="text-sm text-slate-600">• {tip}</div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">Examples</div>
-              <div className="space-y-3">
-                {currentUnit.grammar.examples.map((example, index) => (
-                  <div key={`${example.text}-${index}`} className="rounded-2xl bg-white border border-slate-100 p-4">
-                    <div className="font-bold text-slate-800">{example.text}</div>
-                    <div className="text-sm text-slate-500 mt-1">{example.translation}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {currentUnit.grammar.exercises.map((exercise, index) => {
-              const done = studyState.completedGrammarQuestionIds.includes(exercise.id);
-              const feedback = grammarFeedback[exercise.id];
-              return (
-                <div key={exercise.id} className="rounded-3xl border border-slate-100 bg-slate-50 p-5">
-                  <div className="flex items-start justify-between gap-3 mb-4">
-                    <div>
-                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-500 mb-2">Exercise {index + 1}</div>
-                      <div className="font-bold text-slate-800">{exercise.prompt}</div>
-                      <div className="text-sm text-slate-600 mt-2">{exercise.question}</div>
-                    </div>
-                    {done && <Check size={18} className="text-emerald-500 shrink-0" />}
-                  </div>
-
-                  {exercise.type === 'choice' || exercise.type === 'judge' ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {exercise.options?.map((option) => (
-                        <button
-                          key={option}
-                          onClick={() => handleGrammarChoice(exercise, option)}
-                          className={cn(
-                            "rounded-2xl border px-4 py-3 text-left text-sm font-bold transition-all",
-                            done && option.trim().toLowerCase() === exercise.answer.trim().toLowerCase()
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border-slate-100 bg-white text-slate-700 hover:border-violet-200"
-                          )}
-                        >
-                          {option}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <div className="flex-1 space-y-3">
-                        {exercise.type === 'reorder' && exercise.tokens && (
-                          <div className="flex flex-wrap gap-2">
-                            {exercise.tokens.map((token, tokenIndex) => (
-                              <span
-                                key={`${exercise.id}:${token}:${tokenIndex}`}
-                                className="px-3 py-2 rounded-xl bg-white border border-slate-100 text-sm font-bold text-slate-600"
-                              >
-                                {token}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        <input
-                          value={grammarDrafts[exercise.id] || ''}
-                          onChange={(event) =>
-                            setGrammarDrafts((prev) => ({
-                              ...prev,
-                              [exercise.id]: event.target.value,
-                            }))
-                          }
-                          className="w-full bg-white border border-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:border-violet-400"
-                          placeholder={exercise.clue || '请输入答案'}
-                        />
-                      </div>
-                      <button
-                        onClick={() => handleGrammarFill(exercise)}
-                        className="px-5 py-3 rounded-2xl bg-violet-500 text-white text-sm font-bold"
-                      >
-                        {exercise.type === 'correction' ? '提交改错' : exercise.type === 'reorder' ? '检查句子' : '检查答案'}
-                      </button>
-                    </div>
-                  )}
-
-                  {feedback && (
-                    <div className={cn(
-                      "mt-4 rounded-2xl border px-4 py-3 text-sm",
-                      done ? "bg-emerald-50 border-emerald-100 text-emerald-700" : "bg-amber-50 border-amber-100 text-amber-700"
-                    )}>
-                      {feedback}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
-          <div>
-            <h3 className="font-bold text-slate-800">课文朗读训练</h3>
-            <p className="text-sm text-slate-500 mt-1">按句推进，逐句播放、跟读、标记完成。</p>
-          </div>
-          <button
-            onClick={() => onSelectStage('reading')}
-            className="px-4 py-2 rounded-xl bg-blue-50 text-blue-600 text-sm font-bold"
-          >
-            当前课时：重点句跟读
-          </button>
-        </div>
-
-        {currentReadingSentence ? (
-          <div className="grid grid-cols-1 2xl:grid-cols-[1.4fr_1fr] gap-6">
-            <div className="rounded-3xl bg-slate-50 border border-slate-100 p-6">
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">
-                Sentence {readingIndex + 1}/{currentUnit.sentences.length}
-              </div>
-              <div className="text-2xl font-black text-slate-800 leading-relaxed">{currentReadingSentence.text}</div>
-              <div className="text-sm text-slate-500 mt-3">{currentReadingSentence.translation}</div>
-              <div className="flex flex-wrap gap-3 mt-6">
-                <button
-                  onClick={() => playWordAudio(currentReadingSentence.text, 'US')}
-                  className="px-4 py-3 rounded-2xl bg-white border border-slate-100 text-blue-500 text-sm font-bold"
-                >
-                  播放本句
-                </button>
-                <button
-                  onClick={handleToggleSentenceRecording}
-                  className={cn(
-                    "px-4 py-3 rounded-2xl text-sm font-bold",
-                    isRecordingSentence
-                      ? "bg-red-500 text-white"
-                      : "bg-purple-500 text-white"
-                  )}
-                >
-                  {isRecordingSentence ? '停止录音并评测' : '开始录音跟读'}
-                </button>
-                <button
-                  onClick={handleAzurePronunciationAssessment}
-                  disabled={isAzureAssessing}
-                  className={cn(
-                    "px-4 py-3 rounded-2xl text-sm font-bold",
-                    isAzureAssessing
-                      ? "bg-slate-200 text-slate-500"
-                      : "bg-blue-500 text-white"
-                  )}
-                >
-                  {isAzureAssessing ? 'Azure 评测中...' : 'Azure 发音评测'}
-                </button>
-                <button
-                  onClick={() => {
-                    onToggleSentenceFollowed(currentReadingSentence.id);
-                    if (readingIndex < currentUnit.sentences.length - 1) {
-                      setReadingIndex((prev) => prev + 1);
-                    }
-                  }}
-                  className="px-4 py-3 rounded-2xl bg-emerald-500 text-white text-sm font-bold"
-                >
-                  完成并进入下一句
-                </button>
-                <button
-                  onClick={() => {
-                    onAddMistake({
-                      unitId: currentUnit.id,
-                      category: 'speaking',
-                      stage: 'reading',
-                      prompt: currentReadingSentence.text,
-                      expected: '朗读需更流畅、完整',
-                      answer: '朗读卡顿/未完成',
-                      translation: currentReadingSentence.translation,
-                      reason: 'fluency',
-                      hint: '建议先分短意群停顿，再完整朗读一遍。',
-                    });
-                  }}
-                  className="px-4 py-3 rounded-2xl bg-white border border-amber-200 text-amber-600 text-sm font-bold"
-                >
-                  这句读不顺
-                </button>
-              </div>
-
-              {(recordedSentenceUrl || recognizedSentenceText || recordingError) && (
-                <div className="mt-6 rounded-2xl bg-white border border-slate-100 p-4 space-y-3">
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold text-slate-400">跟读对比结果</div>
-                      <div className="text-sm text-slate-600 mt-1">先听原句，再回放自己的录音，对照识别内容和相似度。</div>
-                    </div>
-                    {pronunciationScore !== null && (
-                      <div className={cn(
-                        "px-3 py-2 rounded-xl text-sm font-bold",
-                        pronunciationScore >= 80 ? "bg-emerald-50 text-emerald-600" : pronunciationScore >= 60 ? "bg-amber-50 text-amber-600" : "bg-rose-50 text-rose-600"
-                      )}>
-                        发音相似度 {pronunciationScore}%
-                      </div>
-                    )}
-                  </div>
-
-                  {recordedSentenceUrl && (
-                    <div>
-                      <div className="text-xs font-bold text-slate-400 mb-2">我的录音</div>
-                      <audio controls src={recordedSentenceUrl} className="w-full" />
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                      <div className="text-xs font-bold text-slate-400 mb-2">目标句子</div>
-                      <div className="text-sm font-bold text-slate-800">{currentReadingSentence.text}</div>
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                      <div className="text-xs font-bold text-slate-400 mb-2">识别结果</div>
-                      <div className="text-sm font-bold text-slate-800">{recognizedSentenceText || '等待识别结果'}</div>
-                    </div>
-                  </div>
-
-                  {pronunciationScore !== null && (
-                    <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4 text-sm text-blue-700">
-                      {getPronunciationHint(pronunciationScore)}
-                    </div>
-                  )}
-
-                  {recordingError && (
-                    <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">
-                      {recordingError}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {(azureAssessment || azureAssessmentError) && (
-                <div className="mt-6 rounded-2xl bg-white border border-slate-100 p-4 space-y-4">
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold text-slate-400 mb-1">Azure 发音评测</div>
-                      <div className="text-sm text-slate-600">基于参考句进行准确度、流利度和完整度评测。</div>
-                    </div>
-                    {azureAssessment && (
-                      <div className="px-3 py-2 rounded-xl bg-blue-50 text-blue-600 text-sm font-bold">
-                        总分 {azureAssessment.pronunciationScore}
-                      </div>
-                    )}
-                  </div>
-
-                  {azureAssessment && (
-                    <>
-                      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                          <div className="text-xs text-slate-400">发音总分</div>
-                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.pronunciationScore}</div>
-                        </div>
-                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                          <div className="text-xs text-slate-400">准确度</div>
-                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.accuracyScore}</div>
-                        </div>
-                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                          <div className="text-xs text-slate-400">流利度</div>
-                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.fluencyScore}</div>
-                        </div>
-                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                          <div className="text-xs text-slate-400">完整度</div>
-                          <div className="text-xl font-black text-slate-800 mt-1">{azureAssessment.completenessScore}</div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                          <div className="text-xs font-bold text-slate-400 mb-3">逐词反馈</div>
-                          <div className="flex flex-wrap gap-2">
-                            {azureAssessment.words.map((word) => (
-                              <span
-                                key={`${word.word}-${word.accuracyScore}`}
-                                className={cn(
-                                  "px-3 py-2 rounded-xl text-sm font-bold border",
-                                  word.accuracyScore >= 85
-                                    ? "bg-emerald-50 border-emerald-100 text-emerald-700"
-                                    : word.accuracyScore >= 70
-                                      ? "bg-amber-50 border-amber-100 text-amber-700"
-                                      : "bg-rose-50 border-rose-100 text-rose-700"
-                                )}
-                              >
-                                {word.word} {Math.round(word.accuracyScore)}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                          <div className="text-xs font-bold text-slate-400 mb-3">学习建议</div>
-                          <div className="space-y-2">
-                            {azureAssessment.feedback.map((item) => (
-                              <div key={item} className="text-sm text-slate-600">• {item}</div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {azureAssessmentError && (
-                    <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">
-                      {azureAssessmentError}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
-              {currentUnit.sentences.map((sentence, index) => {
-                const done = studyState.followedSentenceIds.includes(sentence.id);
-                const active = currentReadingSentence.id === sentence.id;
-                return (
-                  <button
-                    key={sentence.id}
-                    onClick={() => setReadingIndex(index)}
-                    className={cn(
-                      "w-full rounded-2xl border p-4 text-left transition-all",
-                      active ? "border-blue-200 bg-blue-50" : "border-slate-100 bg-slate-50 hover:border-slate-200"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-bold text-slate-800">{sentence.text}</span>
-                      {done && <Check size={16} className="text-emerald-500 shrink-0" />}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-2">{sentence.translation}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5 text-sm text-slate-500">
-            当前单元还没有可用的朗读句子。
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-        <h3 className="font-bold text-slate-800 mb-4">课时3-4 巩固与输出闭环</h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="rounded-2xl bg-slate-50 p-5 border border-slate-100">
-            <div className="text-xs font-bold text-purple-500 uppercase tracking-[0.2em] mb-2">Step 3</div>
-            <div className="font-bold text-slate-800 mb-2">进入听写巩固</div>
-            <p className="text-sm text-slate-500 mb-4">围绕本单元词汇和重点句做听写，系统会自动把错误收进错题本。</p>
-            <button onClick={() => onOpenStage('dictation')} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">
-              开始听写
-            </button>
-          </div>
-          <div className="rounded-2xl bg-slate-50 p-5 border border-slate-100">
-            <div className="text-xs font-bold text-blue-500 uppercase tracking-[0.2em] mb-2">Step 4</div>
-            <div className="font-bold text-slate-800 mb-2">进入口语表达</div>
-            <p className="text-sm text-slate-500 mb-4">围绕本单元话题和重点句做 AI 问答，把输入转化成真实输出。</p>
-            <button onClick={() => onOpenStage('speaking')} className="px-4 py-2 rounded-xl blue-gradient text-white text-sm font-bold">
-              开始口语任务
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const DictationModule = ({
   currentUnit,
   onCompleteStage,
@@ -4835,7 +3743,7 @@ const Login = ({ onLogin }: { onLogin: (user: AppUser) => void }) => {
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState<AppTabKey>('dashboard');
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isTextbookLoading, setIsTextbookLoading] = useState(false);
   const [textbooks, setTextbooks] = useState<TextbookSummary[]>([]);
@@ -4962,9 +3870,18 @@ export default function App() {
     }));
   };
 
+  const getTextbookTabByStage = (stage: LessonStageKey): AppTabKey =>
+    stage === 'preview'
+      ? 'textbook-preview'
+      : stage === 'reading'
+        ? 'textbook-sentences'
+        : stage === 'dictation'
+          ? 'dictation'
+          : 'tutor';
+
   const handleOpenStage = (stage: LessonStageKey) => {
     handleSelectStage(stage);
-    setActiveTab(stage === 'dictation' ? 'dictation' : stage === 'speaking' ? 'tutor' : 'vocab');
+    setActiveTab(getTextbookTabByStage(stage));
   };
 
   const updateTodayRecord = (
@@ -5063,7 +3980,7 @@ export default function App() {
       currentUnitId: mistake.unitId,
       currentStage: mistake.stage,
     }));
-    setActiveTab(mistake.stage === 'dictation' ? 'dictation' : mistake.stage === 'speaking' ? 'tutor' : 'vocab');
+    setActiveTab(getTextbookTabByStage(mistake.stage));
   };
 
   const handleCompleteRecommendation = (item: RecommendationItem) => {
@@ -5115,9 +4032,13 @@ export default function App() {
     setActiveTab('dashboard');
   };
 
-  const navItems = [
+  const navItems: Array<{ id: AppTabKey; label: string; icon: React.ElementType; primary?: boolean }> = [
     { id: 'dashboard', label: '首页', icon: LayoutDashboard },
-    { id: 'vocab', label: '教材', icon: BookOpen },
+    { id: 'textbook-overview', label: '单元总览', icon: BookOpen },
+    { id: 'textbook-preview', label: '词汇预习', icon: GraduationCap },
+    { id: 'textbook-sentences', label: '重点句', icon: MessageSquare },
+    { id: 'textbook-grammar', label: '语法', icon: PencilLine },
+    { id: 'textbook-reading', label: '朗读评测', icon: Headphones },
     { id: 'dictation', label: '听写', icon: PencilLine },
     { id: 'tutor', label: 'AI外教', icon: Mic2, primary: true },
     { id: 'stats', label: '统计', icon: BarChart3 },
@@ -5126,7 +4047,7 @@ export default function App() {
 
   // Add management tab for admin
   const displayNavItems = currentUser?.role === 'admin' 
-    ? [...navItems, { id: 'manage', label: '管理', icon: ShieldCheck }]
+    ? [...navItems, { id: 'manage' as AppTabKey, label: '管理', icon: ShieldCheck }]
     : navItems;
 
   if (isAuthLoading) {
@@ -5334,8 +4255,12 @@ export default function App() {
                   onCompleteRecommendation={handleCompleteRecommendation}
                 />
               )}
-              {activeTab === 'vocab' && (
-                <VocabularyModule
+              {(activeTab === 'textbook-overview' ||
+                activeTab === 'textbook-preview' ||
+                activeTab === 'textbook-sentences' ||
+                activeTab === 'textbook-grammar' ||
+                activeTab === 'textbook-reading') && (
+                <TextbookModule
                   units={availableUnits}
                   currentUnit={currentUnit}
                   studyState={studyState}
@@ -5348,6 +4273,19 @@ export default function App() {
                   onCompleteGrammarExercise={handleCompleteGrammarExercise}
                   onAddPronunciationAssessment={handleAddPronunciationAssessment}
                   onAddMistake={handleAddMistake}
+                  playWordAudio={playWordAudio}
+                  fetchSpeechToken={() => apiFetch<SpeechTokenResponse>('/api/speech-token')}
+                  lockedPage={
+                    activeTab === 'textbook-overview'
+                      ? 'overview'
+                      : activeTab === 'textbook-preview'
+                        ? 'preview'
+                        : activeTab === 'textbook-sentences'
+                          ? 'sentences'
+                          : activeTab === 'textbook-grammar'
+                            ? 'grammar'
+                            : 'reading-practice'
+                  }
                 />
               )}
               {activeTab === 'dictation' && (
@@ -5407,7 +4345,8 @@ export default function App() {
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-slate-100 px-3 py-3 flex justify-between items-center z-50">
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-slate-100 px-3 py-3 overflow-x-auto custom-scrollbar z-50">
+        <div className="flex items-end gap-4 min-w-max">
         {displayNavItems.map((item) => (
           item.primary ? (
             <div key={item.id} className="relative -top-6">
@@ -5429,6 +4368,7 @@ export default function App() {
             </button>
           )
         ))}
+        </div>
       </nav>
     </div>
   );
