@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BookOpen, GraduationCap, MessageSquare, Mic2, PencilLine } from 'lucide-react';
-import { assessPronunciationFromMicrophone } from '../../lib/azureSpeech';
+import { createPronunciationAssessmentSession } from '../../lib/azureSpeech';
 import { TextbookGrammarPage } from './TextbookGrammarPage';
 import { TextbookOverviewPage } from './TextbookOverviewPage';
 import { TextbookPreviewPage } from './TextbookPreviewPage';
@@ -90,6 +90,7 @@ export function TextbookModule({
   const [grammarDrafts, setGrammarDrafts] = useState<Record<string, string>>({});
   const [grammarFeedback, setGrammarFeedback] = useState<Record<string, string>>({});
   const [pendingSentenceAssessmentIndex, setPendingSentenceAssessmentIndex] = useState<number | null>(null);
+  const pronunciationSessionRef = useRef<Awaited<ReturnType<typeof createPronunciationAssessmentSession>> | null>(null);
   const currentReadingSentence = currentUnit.sentences[readingIndex] || currentUnit.sentences[0];
   const previewCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'preview'));
   const readingCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'reading'));
@@ -152,6 +153,7 @@ export function TextbookModule({
 
   useEffect(() => {
     return () => {
+      pronunciationSessionRef.current?.cancel();
       if (recordedSentenceUrl) {
         URL.revokeObjectURL(recordedSentenceUrl);
       }
@@ -159,7 +161,53 @@ export function TextbookModule({
   }, [recordedSentenceUrl]);
   const handleAzurePronunciationAssessment = async (sentenceOverride?: typeof currentReadingSentence) => {
     const sentence = sentenceOverride || currentReadingSentence;
-    if (!sentence || isAzureAssessing) return;
+    if (!sentence) return;
+
+    if (isRecordingSentence && pronunciationSessionRef.current) {
+      setIsAzureAssessing(true);
+      try {
+        const { recognizedText, assessment, weakWords } = await pronunciationSessionRef.current.stop();
+        pronunciationSessionRef.current = null;
+        setRecognizedSentenceText(recognizedText);
+        setPronunciationScore(assessment.pronunciationScore);
+        setAzureAssessment(assessment);
+
+        onAddPronunciationAssessment({
+          unitId: currentUnit.id,
+          sentenceId: sentence.id,
+          sentenceText: sentence.text,
+          pronunciationScore: assessment.pronunciationScore,
+          accuracyScore: assessment.accuracyScore,
+          fluencyScore: assessment.fluencyScore,
+          completenessScore: assessment.completenessScore,
+          weakWords,
+        });
+
+        if (assessment.pronunciationScore < 75 || weakWords.length > 0) {
+          onAddMistake({
+            unitId: currentUnit.id,
+            category: 'speaking',
+            stage: 'reading',
+            prompt: sentence.text,
+            expected: sentence.text,
+            answer: weakWords.join(', ') || recognizedText || 'Azure 评测分数偏低',
+            translation: sentence.translation,
+            reason: 'pronunciation',
+            hint: assessment.feedback[1] || assessment.feedback[0],
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
+        setAzureAssessmentError(message);
+        setRecordingError(message);
+      } finally {
+        setIsRecordingSentence(false);
+        setIsAzureAssessing(false);
+      }
+      return;
+    }
+
+    if (isAzureAssessing) return;
 
     setAzureAssessment(null);
     setAzureAssessmentError('');
@@ -170,53 +218,22 @@ export function TextbookModule({
       URL.revokeObjectURL(recordedSentenceUrl);
       setRecordedSentenceUrl('');
     }
-    setIsAzureAssessing(true);
     setIsRecordingSentence(true);
 
     try {
       const { token, region } = await fetchSpeechToken();
-      const { recognizedText, assessment, weakWords } = await assessPronunciationFromMicrophone({
+      pronunciationSessionRef.current = await createPronunciationAssessmentSession({
         token,
         region,
         referenceText: sentence.text,
         language: 'en-US',
       });
-
-      setRecognizedSentenceText(recognizedText);
-      setPronunciationScore(assessment.pronunciationScore);
-      setAzureAssessment(assessment);
-
-      onAddPronunciationAssessment({
-        unitId: currentUnit.id,
-        sentenceId: sentence.id,
-        sentenceText: sentence.text,
-        pronunciationScore: assessment.pronunciationScore,
-        accuracyScore: assessment.accuracyScore,
-        fluencyScore: assessment.fluencyScore,
-        completenessScore: assessment.completenessScore,
-        weakWords,
-      });
-
-      if (assessment.pronunciationScore < 75 || weakWords.length > 0) {
-        onAddMistake({
-          unitId: currentUnit.id,
-          category: 'speaking',
-          stage: 'reading',
-          prompt: sentence.text,
-          expected: sentence.text,
-          answer: weakWords.join(', ') || recognizedText || 'Azure 评测分数偏低',
-          translation: sentence.translation,
-          reason: 'pronunciation',
-          hint: assessment.feedback[1] || assessment.feedback[0],
-        });
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
       setAzureAssessmentError(message);
       setRecordingError(message);
-    } finally {
-      setIsAzureAssessing(false);
       setIsRecordingSentence(false);
+    } finally {
     }
   };
 

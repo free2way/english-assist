@@ -76,14 +76,14 @@ export function TextbookReadingPracticePage({
                 onClick={onToggleRecording}
                 className={cn('px-4 py-3 rounded-2xl text-sm font-bold', isRecordingSentence ? 'bg-red-500 text-white' : 'bg-purple-500 text-white')}
               >
-                {isRecordingSentence ? 'Azure 正在听你朗读...' : '麦克风朗读本句'}
+                {isRecordingSentence ? '停止并提交评测' : '麦克风朗读本句'}
               </button>
               <button
                 onClick={onAzureAssessment}
                 disabled={isAzureAssessing}
-                className={cn('px-4 py-3 rounded-2xl text-sm font-bold', isAzureAssessing ? 'bg-slate-200 text-slate-500' : 'bg-blue-500 text-white')}
+                className={cn('px-4 py-3 rounded-2xl text-sm font-bold', isAzureAssessing ? 'bg-slate-200 text-slate-500' : isRecordingSentence ? 'bg-red-500 text-white' : 'bg-blue-500 text-white')}
               >
-                {isAzureAssessing ? 'Azure 评测中...' : 'Azure 发音评测'}
+                {isAzureAssessing ? 'Azure 提交中...' : isRecordingSentence ? '停止并提交 Azure 评测' : '开始 Azure 发音评测'}
               </button>
               <button onClick={onCompleteCurrentSentence} className="px-4 py-3 rounded-2xl bg-emerald-500 text-white text-sm font-bold">
                 完成并进入下一句
@@ -98,7 +98,7 @@ export function TextbookReadingPracticePage({
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                   <div>
                     <div className="text-xs font-bold text-slate-400">跟读对比结果</div>
-                    <div className="text-sm text-slate-600 mt-1">点击麦克风后会直接用 Azure 采集朗读并返回识别与评测结果。</div>
+                    <div className="text-sm text-slate-600 mt-1">先点开始，再点一次停止，系统会立刻提交 Azure 发音评测，不再等待自动超时。</div>
                   </div>
                   {pronunciationScore !== null && (
                     <div

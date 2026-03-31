@@ -44,7 +44,7 @@ import { DictationModule } from './components/DictationModule';
 import { ManagementModule } from './components/ManagementModule';
 import { StatCard } from './components/StatCard';
 import { Statistics } from './components/Statistics';
-import { assessPronunciationFromMicrophone, recognizeSpeechFromMicrophone, speakTextWithAzure } from './lib/azureSpeech';
+import { createPronunciationAssessmentSession, recognizeSpeechFromMicrophone, speakTextWithAzure } from './lib/azureSpeech';
 import { cn } from './lib/utils';
 import { TextbookModule } from './components/textbook/TextbookModule';
 import {
@@ -1696,6 +1696,7 @@ const AITutor = ({
   const [speakingAssessmentText, setSpeakingAssessmentText] = useState('');
   const [isAssessingSpeaking, setIsAssessingSpeaking] = useState(false);
   const [speakingAssessmentError, setSpeakingAssessmentError] = useState('');
+  const speakingSessionRef = useRef<Awaited<ReturnType<typeof createPronunciationAssessmentSession>> | null>(null);
 
   useEffect(() => {
     setMessages([{ role: 'ai', text: starterQuestion }]);
@@ -1703,6 +1704,9 @@ const AITutor = ({
     setSpeakingAssessment(null);
     setSpeakingAssessmentText('');
     setSpeakingAssessmentError('');
+    speakingSessionRef.current?.cancel();
+    speakingSessionRef.current = null;
+    setIsAssessingSpeaking(false);
   }, [starterQuestion]);
 
   const toggleListening = async () => {
@@ -1739,36 +1743,48 @@ const AITutor = ({
       return;
     }
 
+    if (isAssessingSpeaking && speakingSessionRef.current) {
+      try {
+        const { assessment, weakWords } = await speakingSessionRef.current.stop();
+        speakingSessionRef.current = null;
+        setSpeakingAssessment(assessment);
+        setSpeakingAssessmentText(referenceText);
+
+        if (currentUnit && (assessment.pronunciationScore < 75 || weakWords.length > 0)) {
+          onAddMistake({
+            unitId: currentUnit.id,
+            category: 'speaking',
+            stage: 'speaking',
+            prompt: tutorMode === 'free-talk' ? 'Free Talk Azure 口语评测' : `口语任务：${currentUnit.title}`,
+            expected: referenceText,
+            answer: weakWords.join(', ') || '发音分数偏低',
+            reason: 'pronunciation',
+            hint: assessment.feedback[1] || assessment.feedback[0],
+          });
+        }
+      } catch (error: any) {
+        setSpeakingAssessmentError(error?.message || 'Azure 口语评测失败，请稍后再试。');
+      } finally {
+        setIsAssessingSpeaking(false);
+      }
+      return;
+    }
+
     setIsAssessingSpeaking(true);
     setSpeakingAssessment(null);
     setSpeakingAssessmentError('');
 
     try {
       const { token, region } = await fetchSpeechToken();
-      const { assessment, weakWords } = await assessPronunciationFromMicrophone({
+      speakingSessionRef.current = await createPronunciationAssessmentSession({
         token,
         region,
         referenceText,
         language: accent === 'US' ? 'en-US' : 'en-GB',
       });
-      setSpeakingAssessment(assessment);
       setSpeakingAssessmentText(referenceText);
-
-      if (currentUnit && (assessment.pronunciationScore < 75 || weakWords.length > 0)) {
-        onAddMistake({
-          unitId: currentUnit.id,
-          category: 'speaking',
-          stage: 'speaking',
-          prompt: tutorMode === 'free-talk' ? 'Free Talk Azure 口语评测' : `口语任务：${currentUnit.title}`,
-          expected: referenceText,
-          answer: weakWords.join(', ') || '发音分数偏低',
-          reason: 'pronunciation',
-          hint: assessment.feedback[1] || assessment.feedback[0],
-        });
-      }
     } catch (error: any) {
       setSpeakingAssessmentError(error?.message || 'Azure 口语评测失败，请稍后再试。');
-    } finally {
       setIsAssessingSpeaking(false);
     }
   };
@@ -1915,13 +1931,12 @@ const AITutor = ({
         <div className="flex flex-wrap gap-3 mb-5">
           <button
             onClick={handleAssessSpeaking}
-            disabled={isAssessingSpeaking}
             className={cn(
               'px-4 py-2 rounded-2xl text-sm font-bold',
-              isAssessingSpeaking ? 'bg-slate-200 text-slate-500' : 'bg-violet-500 text-white',
+              isAssessingSpeaking ? 'bg-red-500 text-white' : 'bg-violet-500 text-white',
             )}
           >
-            {isAssessingSpeaking ? 'Azure 口语评测中...' : 'Azure 口语评测'}
+            {isAssessingSpeaking ? '停止并提交 Azure 口语评测' : '开始 Azure 口语评测'}
           </button>
           <div className="text-xs text-slate-400 self-center">
             {tutorMode === 'free-talk' ? '会按当前输入或最近一句自由表达做发音评测。' : '会按当前输入或最近一句教材表达做发音评测。'}
