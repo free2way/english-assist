@@ -469,7 +469,6 @@ export function TextbookModule({
           onSelectStage={() => onSelectStage('reading')}
           onPlaySentence={(text) => playWordAudio(text, 'US')}
           onToggleRecording={() => handleAzurePronunciationAssessment()}
-          onAzureAssessment={() => handleAzurePronunciationAssessment()}
           onCompleteCurrentSentence={() => {
             onToggleSentenceFollowed(currentReadingSentence.id);
             if (readingIndex < currentUnit.sentences.length - 1) {
