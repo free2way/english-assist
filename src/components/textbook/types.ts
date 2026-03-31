@@ -25,6 +25,21 @@ export interface VocabItem {
   example: string;
 }
 
+export interface AppUser {
+  id: string;
+  username: string;
+  grade: string;
+  semester: string;
+  school: string;
+  role: 'admin' | 'user';
+}
+
+export interface AIConfig {
+  model: string;
+  apiKey: string;
+  baseURL?: string;
+}
+
 export interface SentenceItem {
   id: string;
   text: string;
@@ -111,6 +126,40 @@ export interface UnitBundle {
   grammar: GrammarModule;
 }
 
+export interface TextbookSummary {
+  id: string;
+  publisher: string;
+  series: string;
+  title: string;
+  stage: string;
+  grade: string;
+  semester: string;
+  volume: string;
+  description: string;
+}
+
+export interface TextbookContent extends TextbookSummary {
+  units: Array<{
+    id: string;
+    unitCode: string;
+    title: string;
+    summary: string;
+    passage: string;
+    sortOrder: number;
+    lessons: Array<{
+      id: string;
+      stageKey: LessonStageKey;
+      title: string;
+      objective: string;
+      sortOrder: number;
+    }>;
+    vocab: Array<VocabItem & { sortOrder: number }>;
+    sentences: Array<SentenceItem & { sortOrder: number }>;
+    phrases: Array<{ id: string; phrase: string; meaning: string; example: string; sortOrder: number }>;
+    patterns: Array<{ id: string; text: string; translation: string; kind: 'sentence' | 'pattern'; sortOrder: number }>;
+  }>;
+}
+
 export interface DailyCheckinRecord {
   date: string;
   completedTaskIds: string[];
@@ -150,6 +199,36 @@ export interface StudyState {
   dailyCheckins: DailyCheckinRecord[];
   mistakes: MistakeRecord[];
   pronunciationAssessments: PronunciationAssessmentRecord[];
+}
+
+export interface ReviewPackItem {
+  id: string;
+  title: string;
+  summary: string;
+  reasonLabel: string;
+  stage: LessonStageKey;
+  mistake: MistakeRecord;
+}
+
+export interface WeaknessSummaryItem {
+  label: string;
+  count: number;
+  hint: string;
+  color?: string;
+}
+
+export interface ChallengeStatus {
+  ready: boolean;
+  score: number;
+  progress: number;
+  challengeLabel: string;
+}
+
+export interface SevenDayTrendPoint {
+  date: string;
+  label: string;
+  progress: number;
+  checkedIn: number;
 }
 
 export interface TextbookPageMeta {
