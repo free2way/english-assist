@@ -44,6 +44,7 @@ import { DictationModule } from './components/DictationModule';
 import { ManagementModule } from './components/ManagementModule';
 import { StatCard } from './components/StatCard';
 import { Statistics } from './components/Statistics';
+import { assessPronunciationFromMicrophone, recognizeSpeechFromMicrophone, speakTextWithAzure } from './lib/azureSpeech';
 import { cn } from './lib/utils';
 import { TextbookModule } from './components/textbook/TextbookModule';
 import {
@@ -1663,12 +1664,21 @@ const AITutor = ({
   currentUnit,
   onCompleteStage,
   onAddMistake,
+  fetchSpeechToken,
 }: {
   currentUnit: UnitBundle | null;
   onCompleteStage: (stage: LessonStageKey) => void;
   onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
+  fetchSpeechToken: () => Promise<SpeechTokenResponse>;
 }) => {
-  const coachConfig = getSpeakingCoachConfig(currentUnit);
+  const [tutorMode, setTutorMode] = useState<'unit' | 'free-talk'>('unit');
+  const coachConfig = tutorMode === 'free-talk'
+    ? {
+        intro: 'Hello! Let us have a free talk in English. You can chat about school, hobbies, plans, or anything from your day.',
+        goal: 'Speak naturally in complete English sentences and keep the conversation going.',
+        prompts: ['What did you do today?', 'What are you interested in these days?', 'Tell me something about your weekend plan.'],
+      }
+    : getSpeakingCoachConfig(currentUnit);
   const starterQuestion = coachConfig.intro;
   const [messages, setMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([
     { role: 'ai', text: starterQuestion }
@@ -1679,175 +1689,38 @@ const AITutor = ({
   const [isListening, setIsListening] = useState(false);
   const [accent, setAccent] = useState<'US' | 'UK'>('US');
   const scrollRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
 
   // 存储识别候选结果
-  const [recognitionAlternatives, setRecognitionAlternatives] = useState<string[]>([]);
-  const [showAlternatives, setShowAlternatives] = useState(false);
-  const [recognitionConfidence, setRecognitionConfidence] = useState(0);
   const [practiceFeedback, setPracticeFeedback] = useState<{ level: 'good' | 'needs-work'; text: string } | null>(null);
+  const [speakingAssessment, setSpeakingAssessment] = useState<AzurePronunciationResult | null>(null);
+  const [speakingAssessmentText, setSpeakingAssessmentText] = useState('');
+  const [isAssessingSpeaking, setIsAssessingSpeaking] = useState(false);
+  const [speakingAssessmentError, setSpeakingAssessmentError] = useState('');
 
   useEffect(() => {
     setMessages([{ role: 'ai', text: starterQuestion }]);
     setPracticeFeedback(null);
+    setSpeakingAssessment(null);
+    setSpeakingAssessmentText('');
+    setSpeakingAssessmentError('');
   }, [starterQuestion]);
 
-  // 教育场景常用词汇提示，帮助提高识别准确率
-  const EDUCATION_PHRASES = [
-    'school', 'student', 'teacher', 'classroom', 'homework', 'assignment',
-    'examination', 'exam', 'test', 'quiz', 'study', 'learn', 'education',
-    'knowledge', 'understand', 'remember', 'practice', 'review', 'preview',
-    'mathematics', 'physics', 'chemistry', 'biology', 'history', 'geography',
-    'literature', 'language', 'English', 'Chinese', 'science', 'art', 'music',
-    'because', 'therefore', 'however', 'although', 'furthermore', 'moreover',
-    'favorite', 'interesting', 'difficult', 'important', 'necessary',
-    'hobby', 'interest', 'sport', 'reading', 'writing', 'listening', 'speaking'
-  ];
+  const toggleListening = async () => {
+    if (isListening) return;
 
-  // 初始化语音识别
-  const initSpeechRecognition = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 5; // 获取5个识别候选结果
-      recognition.lang = accent === 'US' ? 'en-US' : 'en-GB';
-
-      // 使用自定义词汇提示（如果浏览器支持）
-      if ('grammars' in recognition) {
-        try {
-          const SpeechGrammarList = (window as any).SpeechGrammarList || (window as any).webkitSpeechGrammarList;
-          if (SpeechGrammarList) {
-            const grammarList = new SpeechGrammarList();
-            // 添加教育场景常用词汇
-            const grammar = '#JSGF V1.0; grammar education; public <education> = ' + EDUCATION_PHRASES.join(' | ') + ';';
-            grammarList.addFromString(grammar, 1);
-            recognition.grammars = grammarList;
-          }
-        } catch (e) {
-          console.log('Grammar list not supported');
-        }
-      }
-
-      recognition.onresult = (event: any) => {
-        const results = event.results[0];
-        const transcript = results[0].transcript;
-        const confidence = results[0].confidence || 0;
-        
-        setRecognitionConfidence(confidence);
-        
-        // 收集所有候选结果
-        const alternatives: string[] = [];
-        for (let i = 0; i < results.length; i++) {
-          if (results[i].transcript && results[i].transcript !== transcript) {
-            alternatives.push(results[i].transcript);
-          }
-        }
-        setRecognitionAlternatives(alternatives);
-        
-        setInputValue(transcript);
-        
-        if (event.results[0].isFinal) {
-          setIsListening(false);
-          // 如果置信度较低，显示候选选项
-          if (confidence < 0.7 && alternatives.length > 0) {
-            setShowAlternatives(true);
-            if (currentUnit) {
-              onAddMistake({
-                unitId: currentUnit.id,
-                category: 'speaking',
-                stage: 'speaking',
-                prompt: '语音识别置信度较低',
-                expected: transcript,
-                answer: alternatives[0] || transcript,
-                reason: 'pronunciation',
-                hint: '建议放慢语速，再说一遍完整句子。',
-              });
-            }
-          }
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        if (event.error === 'not-allowed') {
-          alert('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风。');
-        } else if (event.error === 'network') {
-          alert('语音识别网络错误，请检查网络连接。');
-        } else if (event.error === 'no-speech') {
-          // 没有检测到语音，不显示错误
-          console.log('No speech detected');
-        } else if (event.error !== 'aborted') {
-          alert(`语音识别发生错误: ${event.error}`);
-        }
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current = recognition;
-      return true;
-    }
-    return false;
-  }, [accent]);
-
-  // 选择候选文本
-  const selectAlternative = (text: string) => {
-    setInputValue(text);
-    setShowAlternatives(false);
-  };
-
-  // 组件挂载时初始化
-  useEffect(() => {
-    // 尝试立即初始化
-    if (!initSpeechRecognition()) {
-      // 如果失败，延迟重试（某些浏览器需要时间加载）
-      const timer = setTimeout(() => {
-        initSpeechRecognition();
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, []);
-
-  // accent 变化时更新识别语言
-  useEffect(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.lang = accent === 'US' ? 'en-US' : 'en-GB';
-    }
-  }, [accent]);
-
-  const toggleListening = () => {
-    // 如果没有初始化，尝试初始化
-    if (!recognitionRef.current) {
-      if (!initSpeechRecognition()) {
-        alert('您的浏览器不支持语音识别功能，推荐使用 Chrome 或 Edge 浏览器。');
-        return;
-      }
-    }
-
-    if (isListening) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        console.error(e);
-      }
+    setIsListening(true);
+    try {
+      const { token, region } = await fetchSpeechToken();
+      const transcript = await recognizeSpeechFromMicrophone({
+        token,
+        region,
+        language: accent === 'US' ? 'en-US' : 'en-GB',
+      });
+      setInputValue(transcript.replace(/[.。]\s*$/, ''));
+    } catch (error: any) {
+      alert(error?.message || 'Azure 语音识别失败，请检查麦克风权限后重试。');
+    } finally {
       setIsListening(false);
-    } else {
-      try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch (error: any) {
-        console.error('Failed to start recognition:', error);
-        if (error.name === 'NotAllowedError') {
-          alert('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风。');
-        } else {
-          alert('无法启动麦克风，请检查权限设置或刷新页面重试。');
-        }
-        setIsListening(false);
-      }
     }
   };
 
@@ -1856,6 +1729,49 @@ const AITutor = ({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.text || '';
+
+  const handleAssessSpeaking = async () => {
+    const referenceText = inputValue.trim() || latestUserMessage.trim();
+    if (!referenceText) {
+      setSpeakingAssessmentError('先输入一句话，或先完成一次语音表达，再进行 Azure 口语评测。');
+      return;
+    }
+
+    setIsAssessingSpeaking(true);
+    setSpeakingAssessment(null);
+    setSpeakingAssessmentError('');
+
+    try {
+      const { token, region } = await fetchSpeechToken();
+      const { assessment, weakWords } = await assessPronunciationFromMicrophone({
+        token,
+        region,
+        referenceText,
+        language: accent === 'US' ? 'en-US' : 'en-GB',
+      });
+      setSpeakingAssessment(assessment);
+      setSpeakingAssessmentText(referenceText);
+
+      if (currentUnit && (assessment.pronunciationScore < 75 || weakWords.length > 0)) {
+        onAddMistake({
+          unitId: currentUnit.id,
+          category: 'speaking',
+          stage: 'speaking',
+          prompt: tutorMode === 'free-talk' ? 'Free Talk Azure 口语评测' : `口语任务：${currentUnit.title}`,
+          expected: referenceText,
+          answer: weakWords.join(', ') || '发音分数偏低',
+          reason: 'pronunciation',
+          hint: assessment.feedback[1] || assessment.feedback[0],
+        });
+      }
+    } catch (error: any) {
+      setSpeakingAssessmentError(error?.message || 'Azure 口语评测失败，请稍后再试。');
+    } finally {
+      setIsAssessingSpeaking(false);
+    }
+  };
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -1866,7 +1782,7 @@ const AITutor = ({
     setIsLoading(true);
 
     try {
-      const feedback = buildSpeakingFeedback(userText, currentUnit);
+      const feedback = buildSpeakingFeedback(userText, tutorMode === 'unit' ? currentUnit : null);
       setPracticeFeedback({
         level: feedback.reason ? 'needs-work' : 'good',
         text: feedback.hint,
@@ -1876,16 +1792,18 @@ const AITutor = ({
           unitId: currentUnit.id,
           category: 'speaking',
           stage: 'speaking',
-          prompt: `口语任务：${currentUnit.title}`,
+          prompt: tutorMode === 'free-talk' ? 'Free Talk 自由对话' : `口语任务：${currentUnit.title}`,
           expected: coachConfig.goal,
           answer: userText,
           reason: feedback.reason,
           hint: feedback.hint,
         });
       }
-      const lessonPrompt = currentUnit
-        ? `You are coaching a middle or high school student on FLTRP unit "${currentUnit.title}". Goal: ${coachConfig.goal}. Ask short follow-up questions and help the student answer more naturally. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}. Student response: ${userText}`
-        : userText;
+      const lessonPrompt = tutorMode === 'free-talk'
+        ? `You are a friendly English speaking partner for a middle or high school student. Keep the conversation natural, encouraging, and short. Ask one follow-up question at a time. Student says: ${userText}`
+        : currentUnit
+          ? `You are coaching a middle or high school student on FLTRP unit "${currentUnit.title}". Goal: ${coachConfig.goal}. Ask short follow-up questions and help the student answer more naturally. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}. Student response: ${userText}`
+          : userText;
       const aiResponse = await generateChatResponse(lessonPrompt);
       setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
       onCompleteStage('speaking');
@@ -1902,6 +1820,20 @@ const AITutor = ({
   const speakText = async (text: string, index: number) => {
     if (isSpeaking !== null) return;
     setIsSpeaking(index);
+
+    try {
+      const { token, region } = await fetchSpeechToken();
+      await speakTextWithAzure({
+        token,
+        region,
+        text,
+        voiceName: accent === 'US' ? 'en-US-AvaMultilingualNeural' : 'en-GB-SoniaNeural',
+      });
+      setIsSpeaking(null);
+      return;
+    } catch (error) {
+      console.error('Azure TTS Error:', error);
+    }
 
     try {
       const success = await generateTTS(text, accent);
@@ -1929,24 +1861,42 @@ const AITutor = ({
             <div>
               <h2 className="text-xl font-bold text-slate-800">AI 私人外教</h2>
               <p className="text-sm text-slate-500">
-                正在讨论：{currentUnit ? `${currentUnit.unit} · ${currentUnit.title}` : '教材口语练习'}
+                {tutorMode === 'free-talk'
+                  ? '当前模式：Free Talk 自由对话'
+                  : `正在讨论：${currentUnit ? `${currentUnit.unit} · ${currentUnit.title}` : '教材口语练习'}`}
               </p>
               <p className="text-xs text-slate-400 mt-1">{coachConfig.goal}</p>
             </div>
           </div>
-          <div className="flex bg-slate-100 p-1 rounded-xl">
-            <button 
-              onClick={() => setAccent('US')}
-              className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", accent === 'US' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
-            >
-              美式 (US)
-            </button>
-            <button 
-              onClick={() => setAccent('UK')}
-              className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", accent === 'UK' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
-            >
-              英式 (UK)
-            </button>
+          <div className="flex flex-col gap-2">
+            <div className="flex bg-slate-100 p-1 rounded-xl">
+              <button
+                onClick={() => setTutorMode('unit')}
+                className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", tutorMode === 'unit' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
+              >
+                教材陪练
+              </button>
+              <button
+                onClick={() => setTutorMode('free-talk')}
+                className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", tutorMode === 'free-talk' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
+              >
+                Free Talk
+              </button>
+            </div>
+            <div className="flex bg-slate-100 p-1 rounded-xl">
+              <button 
+                onClick={() => setAccent('US')}
+                className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", accent === 'US' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
+              >
+                美式 (US)
+              </button>
+              <button 
+                onClick={() => setAccent('UK')}
+                className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", accent === 'UK' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}
+              >
+                英式 (UK)
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1962,6 +1912,22 @@ const AITutor = ({
           ))}
         </div>
 
+        <div className="flex flex-wrap gap-3 mb-5">
+          <button
+            onClick={handleAssessSpeaking}
+            disabled={isAssessingSpeaking}
+            className={cn(
+              'px-4 py-2 rounded-2xl text-sm font-bold',
+              isAssessingSpeaking ? 'bg-slate-200 text-slate-500' : 'bg-violet-500 text-white',
+            )}
+          >
+            {isAssessingSpeaking ? 'Azure 口语评测中...' : 'Azure 口语评测'}
+          </button>
+          <div className="text-xs text-slate-400 self-center">
+            {tutorMode === 'free-talk' ? '会按当前输入或最近一句自由表达做发音评测。' : '会按当前输入或最近一句教材表达做发音评测。'}
+          </div>
+        </div>
+
         {practiceFeedback && (
           <div className={cn(
             "mb-5 rounded-2xl border p-4 text-sm",
@@ -1970,6 +1936,83 @@ const AITutor = ({
               : "bg-amber-50 border-amber-100 text-amber-700"
           )}>
             {practiceFeedback.text}
+          </div>
+        )}
+
+        {(speakingAssessment || speakingAssessmentError) && (
+          <div className="mb-5 rounded-2xl border border-slate-100 bg-slate-50 p-4 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold text-slate-400 mb-1">Azure 口语评测</div>
+                <div className="text-sm text-slate-600">{speakingAssessmentText || '当前表达'}</div>
+              </div>
+              {speakingAssessment && (
+                <div className="px-3 py-2 rounded-xl bg-violet-50 text-violet-600 text-sm font-bold">
+                  总分 {speakingAssessment.pronunciationScore}
+                </div>
+              )}
+            </div>
+
+            {speakingAssessment && (
+              <>
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                  <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                    <div className="text-xs text-slate-400">发音</div>
+                    <div className="text-xl font-black text-slate-800 mt-1">{speakingAssessment.pronunciationScore}</div>
+                  </div>
+                  <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                    <div className="text-xs text-slate-400">准确度</div>
+                    <div className="text-xl font-black text-slate-800 mt-1">{speakingAssessment.accuracyScore}</div>
+                  </div>
+                  <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                    <div className="text-xs text-slate-400">流利度</div>
+                    <div className="text-xl font-black text-slate-800 mt-1">{speakingAssessment.fluencyScore}</div>
+                  </div>
+                  <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                    <div className="text-xs text-slate-400">完整度</div>
+                    <div className="text-xl font-black text-slate-800 mt-1">{speakingAssessment.completenessScore}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-400 mb-3">逐词反馈</div>
+                    <div className="flex flex-wrap gap-2">
+                      {speakingAssessment.words.map((word) => (
+                        <span
+                          key={`${word.word}-${word.accuracyScore}`}
+                          className={cn(
+                            'px-3 py-2 rounded-xl text-sm font-bold border',
+                            word.accuracyScore >= 85
+                              ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+                              : word.accuracyScore >= 70
+                                ? 'bg-amber-50 border-amber-100 text-amber-700'
+                                : 'bg-rose-50 border-rose-100 text-rose-700',
+                          )}
+                        >
+                          {word.word} {Math.round(word.accuracyScore)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-white border border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-400 mb-3">学习建议</div>
+                    <div className="space-y-2">
+                      {speakingAssessment.feedback.map((item) => (
+                        <div key={item} className="text-sm text-slate-600">• {item}</div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {speakingAssessmentError && (
+              <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">
+                {speakingAssessmentError}
+              </div>
+            )}
           </div>
         )}
 
@@ -2036,7 +2079,7 @@ const AITutor = ({
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder={isListening ? "正在倾听..." : "用英语和外教聊聊吧..."}
+            placeholder={isListening ? "Azure 正在听你说..." : tutorMode === 'free-talk' ? "随便聊聊今天、兴趣或计划..." : "用英语和外教聊聊吧..."}
             className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 pl-16 pr-14 text-sm outline-none focus:border-blue-500 transition-all"
           />
           <button 
@@ -2048,47 +2091,10 @@ const AITutor = ({
           </button>
         </div>
 
-        {/* 语音识别候选结果 */}
-        <AnimatePresence>
-          {showAlternatives && recognitionAlternatives.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl"
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <AlertCircle size={14} className="text-amber-500" />
-                <span className="text-xs text-amber-700 font-medium">识别结果不确定，请选择更准确的文本：</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => setShowAlternatives(false)}
-                  className="px-3 py-1.5 bg-white border border-amber-200 rounded-lg text-xs text-amber-700 hover:bg-amber-100 transition-colors"
-                >
-                  {inputValue} ✓
-                </button>
-                {recognitionAlternatives.map((alt, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => selectAlternative(alt)}
-                    className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 hover:border-blue-300 hover:text-blue-600 transition-colors"
-                  >
-                    {alt}
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* 识别置信度指示器 */}
-        {!showAlternatives && recognitionConfidence > 0 && recognitionConfidence < 0.7 && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-amber-600">
-            <AlertCircle size={12} />
-            <span>识别置信度较低，建议检查文本或重试</span>
-          </div>
-        )}
+        <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+          <AlertCircle size={12} />
+          <span>麦克风输入与对话播报会优先使用 Azure Speech。</span>
+        </div>
       </div>
 
       {/* Scaffolding Tools */}
@@ -2984,6 +2990,7 @@ export default function App() {
                   currentUnit={currentUnit}
                   onCompleteStage={handleCompleteStage}
                   onAddMistake={handleAddMistake}
+                  fetchSpeechToken={() => apiFetch<SpeechTokenResponse>('/api/speech-token')}
                 />
               )}
               {activeTab === 'stats' && (

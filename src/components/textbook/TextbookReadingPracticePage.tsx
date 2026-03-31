@@ -76,7 +76,7 @@ export function TextbookReadingPracticePage({
                 onClick={onToggleRecording}
                 className={cn('px-4 py-3 rounded-2xl text-sm font-bold', isRecordingSentence ? 'bg-red-500 text-white' : 'bg-purple-500 text-white')}
               >
-                {isRecordingSentence ? '停止录音并评测' : '开始录音跟读'}
+                {isRecordingSentence ? 'Azure 正在听你朗读...' : '麦克风朗读本句'}
               </button>
               <button
                 onClick={onAzureAssessment}
@@ -98,7 +98,7 @@ export function TextbookReadingPracticePage({
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                   <div>
                     <div className="text-xs font-bold text-slate-400">跟读对比结果</div>
-                    <div className="text-sm text-slate-600 mt-1">先听原句，再回放自己的录音，对照识别内容和相似度。</div>
+                    <div className="text-sm text-slate-600 mt-1">点击麦克风后会直接用 Azure 采集朗读并返回识别与评测结果。</div>
                   </div>
                   {pronunciationScore !== null && (
                     <div

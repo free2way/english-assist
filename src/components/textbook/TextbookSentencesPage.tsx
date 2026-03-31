@@ -8,8 +8,9 @@ interface Props {
   readingCompleted: boolean;
   onSelectStage: () => void;
   onPlaySentence: (text: string) => void;
+  onMicPracticeSentence: (sentence: SentenceItem, index: number) => void;
   onToggleSentenceFollowed: (sentenceId: string) => void;
-  onNeedCorrection: (sentence: SentenceItem) => void;
+  onNeedCorrection: (sentence: SentenceItem, index: number) => void;
   onCompleteAndOpenDictation: () => void;
 }
 
@@ -19,6 +20,7 @@ export function TextbookSentencesPage({
   readingCompleted,
   onSelectStage,
   onPlaySentence,
+  onMicPracticeSentence,
   onToggleSentenceFollowed,
   onNeedCorrection,
   onCompleteAndOpenDictation,
@@ -33,13 +35,19 @@ export function TextbookSentencesPage({
           </button>
         </div>
         <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1 custom-scrollbar">
-          {currentUnit.sentences.map((sentence) => {
+          {currentUnit.sentences.map((sentence, index) => {
             const followed = studyState.followedSentenceIds.includes(sentence.id);
             return (
               <div key={sentence.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                 <div className="font-bold text-slate-800">{sentence.text}</div>
                 <div className="text-sm text-slate-500 mt-1">{sentence.translation}</div>
                 <div className="flex flex-wrap gap-2 mt-4">
+                  <button
+                    onClick={() => onMicPracticeSentence(sentence, index)}
+                    className="px-4 py-2 rounded-xl bg-purple-500 text-white text-xs font-bold"
+                  >
+                    麦克风跟读
+                  </button>
                   <button
                     onClick={() => onPlaySentence(sentence.text)}
                     className="px-4 py-2 rounded-xl bg-white border border-slate-100 text-blue-500 text-xs font-bold"
@@ -56,11 +64,14 @@ export function TextbookSentencesPage({
                     {followed ? '已完成跟读' : '标记已跟读'}
                   </button>
                   <button
-                    onClick={() => onNeedCorrection(sentence)}
+                    onClick={() => onNeedCorrection(sentence, index)}
                     className="px-4 py-2 rounded-xl bg-white border border-amber-200 text-amber-600 text-xs font-bold"
                   >
                     需要纠音
                   </button>
+                </div>
+                <div className="mt-3 text-[11px] text-slate-400">
+                  点“麦克风跟读”会直接进入 Azure 朗读评测；点“需要纠音”会优先打开这句的纠音流程。
                 </div>
               </div>
             );
