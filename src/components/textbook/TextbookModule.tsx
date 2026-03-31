@@ -91,6 +91,9 @@ export function TextbookModule({
   const [grammarFeedback, setGrammarFeedback] = useState<Record<string, string>>({});
   const [pendingSentenceAssessmentIndex, setPendingSentenceAssessmentIndex] = useState<number | null>(null);
   const pronunciationSessionRef = useRef<Awaited<ReturnType<typeof createPronunciationAssessmentSession>> | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
   const currentReadingSentence = currentUnit.sentences[readingIndex] || currentUnit.sentences[0];
   const previewCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'preview'));
   const readingCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'reading'));
@@ -154,6 +157,8 @@ export function TextbookModule({
   useEffect(() => {
     return () => {
       pronunciationSessionRef.current?.cancel();
+      mediaRecorderRef.current?.stop?.();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       if (recordedSentenceUrl) {
         URL.revokeObjectURL(recordedSentenceUrl);
       }
@@ -166,6 +171,9 @@ export function TextbookModule({
     if (isRecordingSentence && pronunciationSessionRef.current) {
       setIsAzureAssessing(true);
       try {
+        mediaRecorderRef.current?.stop();
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
         const { recognizedText, assessment, weakWords } = await pronunciationSessionRef.current.stop();
         pronunciationSessionRef.current = null;
         setRecognizedSentenceText(recognizedText);
@@ -221,6 +229,24 @@ export function TextbookModule({
     setIsRecordingSentence(true);
 
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      recordedChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+      mediaRecorder.onstop = () => {
+        if (recordedChunksRef.current.length === 0) return;
+        const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+        const url = URL.createObjectURL(blob);
+        setRecordedSentenceUrl(url);
+      };
+      mediaRecorder.start();
+
       const { token, region } = await fetchSpeechToken();
       pronunciationSessionRef.current = await createPronunciationAssessmentSession({
         token,
@@ -232,6 +258,9 @@ export function TextbookModule({
       const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
       setAzureAssessmentError(message);
       setRecordingError(message);
+      mediaRecorderRef.current?.stop?.();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
       setIsRecordingSentence(false);
     } finally {
     }
@@ -475,19 +504,6 @@ export function TextbookModule({
               setReadingIndex((prev) => prev + 1);
             }
           }}
-          onMarkNotSmooth={() =>
-            onAddMistake({
-              unitId: currentUnit.id,
-              category: 'speaking',
-              stage: 'reading',
-              prompt: currentReadingSentence.text,
-              expected: '朗读需更流畅、完整',
-              answer: '朗读卡顿/未完成',
-              translation: currentReadingSentence.translation,
-              reason: 'fluency',
-              hint: '建议先分短意群停顿，再完整朗读一遍。',
-            })
-          }
           onSelectReadingSentence={setReadingIndex}
         />
       )}

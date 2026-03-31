@@ -21,7 +21,6 @@ interface Props {
   onPlaySentence: (text: string) => void;
   onToggleRecording: () => void;
   onCompleteCurrentSentence: () => void;
-  onMarkNotSmooth: () => void;
   onSelectReadingSentence: (index: number) => void;
 }
 
@@ -43,7 +42,6 @@ export function TextbookReadingPracticePage({
   onPlaySentence,
   onToggleRecording,
   onCompleteCurrentSentence,
-  onMarkNotSmooth,
   onSelectReadingSentence,
 }: Props) {
   return (
@@ -97,8 +95,21 @@ export function TextbookReadingPracticePage({
               <button onClick={onCompleteCurrentSentence} className="px-4 py-3 rounded-2xl bg-emerald-500 text-white text-sm font-bold">
                 完成并进入下一句
               </button>
-              <button onClick={onMarkNotSmooth} className="px-4 py-3 rounded-2xl bg-white border border-amber-200 text-amber-600 text-sm font-bold">
-                这句读不顺
+              <button
+                onClick={() => {
+                  if (!recordedSentenceUrl) return;
+                  const audio = new Audio(recordedSentenceUrl);
+                  audio.play().catch(() => undefined);
+                }}
+                disabled={!recordedSentenceUrl}
+                className={cn(
+                  'px-4 py-3 rounded-2xl text-sm font-bold',
+                  recordedSentenceUrl
+                    ? 'bg-white border border-amber-200 text-amber-600'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                )}
+              >
+                学员录音回放
               </button>
             </div>
 
