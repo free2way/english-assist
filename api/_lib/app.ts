@@ -16,7 +16,7 @@ import {
   listTextbooks,
   updateAIServiceConfig,
   type AuthUser,
-} from './db';
+} from './db.js';
 
 export const app = express();
 
