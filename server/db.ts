@@ -239,15 +239,6 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_textbook_sentences_unit_id ON textbook_sentences(unit_id)`,
   `CREATE INDEX IF NOT EXISTS idx_textbook_phrases_unit_id ON textbook_phrases(unit_id)`,
   `CREATE INDEX IF NOT EXISTS idx_textbook_patterns_unit_id ON textbook_patterns(unit_id)`,
-  `
-    CREATE TABLE IF NOT EXISTS ai_service_config (
-      id TEXT PRIMARY KEY CHECK(id = 'global'),
-      model TEXT NOT NULL,
-      base_url TEXT NOT NULL,
-      api_key TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `,
 ];
 
 let initializationPromise: Promise<void> | null = null;
@@ -341,7 +332,19 @@ const createDefaultAdmin = async () => {
   );
 };
 
-const createDefaultAIConfig = async () => {
+const ensureAIServiceConfigTable = async () => {
+  await executeStatement(
+    `
+      CREATE TABLE IF NOT EXISTS ai_service_config (
+        id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `
+  );
+
   const existingConfig = await queryFirst<{ id: string; api_key: string }>(
     'SELECT id, api_key FROM ai_service_config WHERE id = ?',
     ['global']
@@ -396,7 +399,6 @@ export const initializeDatabase = async () => {
         await executeStatement(statement);
       }
       await createDefaultAdmin();
-      await createDefaultAIConfig();
     })();
   }
 
@@ -571,6 +573,7 @@ const mapAIConfig = (
 
 export const getAIServiceConfig = async (options: { includeSecret?: boolean } = {}): Promise<AIServiceConfig> => {
   await initializeDatabase();
+  await ensureAIServiceConfigTable();
   const row = await queryFirst<{ model: string; base_url: string; api_key: string; updated_at?: string }>(
     `
       SELECT model, base_url, api_key, updated_at
@@ -598,6 +601,7 @@ export const updateAIServiceConfig = async (input: {
   apiKey?: string;
 }): Promise<AIServiceConfig> => {
   await initializeDatabase();
+  await ensureAIServiceConfigTable();
   const current = await getAIServiceConfig({ includeSecret: true });
   const model = input.model?.trim() || current.model || DEFAULT_AI_MODEL;
   const baseURL = normalizeBaseURL(input.baseURL || current.baseURL || DEFAULT_AI_BASE_URL);
