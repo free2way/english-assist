@@ -94,7 +94,10 @@ export function TextbookModule({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const currentReadingSentence = currentUnit.sentences[readingIndex] || currentUnit.sentences[0];
+  const safeReadingIndex = currentUnit.sentences.length > 0
+    ? Math.min(Math.max(readingIndex, 0), currentUnit.sentences.length - 1)
+    : 0;
+  const currentReadingSentence = currentUnit.sentences[safeReadingIndex];
   const previewCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'preview'));
   const readingCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'reading'));
   const completedGrammarCount = currentUnit.grammar.exercises.filter((exercise) => studyState.completedGrammarQuestionIds.includes(exercise.id)).length;
@@ -126,6 +129,11 @@ export function TextbookModule({
       setActivePage(lockedPage);
     }
   }, [lockedPage]);
+
+  useEffect(() => {
+    if (readingIndex === safeReadingIndex) return;
+    setReadingIndex(safeReadingIndex);
+  }, [readingIndex, safeReadingIndex]);
 
   useEffect(() => {
     setRecognizedSentenceText('');
@@ -267,6 +275,7 @@ export function TextbookModule({
   };
 
   const handleStartSentenceMicPractice = (index: number) => {
+    if (!currentUnit.sentences[index]) return;
     setReadingIndex(index);
     setActivePage('reading-practice');
     setPendingSentenceAssessmentIndex(index);
@@ -355,6 +364,25 @@ export function TextbookModule({
     if (stage) {
       onSelectStage(stage);
     }
+  };
+
+  const handleSelectReadingSentence = (index: number) => {
+    if (!currentUnit.sentences[index]) return;
+    setReadingIndex(index);
+  };
+
+  const handleCompleteCurrentSentence = () => {
+    const sentence = currentUnit.sentences[safeReadingIndex];
+    if (!sentence) return;
+
+    onToggleSentenceFollowed(sentence.id);
+
+    if (safeReadingIndex < currentUnit.sentences.length - 1) {
+      setReadingIndex(safeReadingIndex + 1);
+      return;
+    }
+
+    onCompleteStage('reading');
   };
 
   return (
@@ -498,13 +526,8 @@ export function TextbookModule({
           onSelectStage={() => onSelectStage('reading')}
           onPlaySentence={(text) => playWordAudio(text, 'US')}
           onToggleRecording={() => handleAzurePronunciationAssessment()}
-          onCompleteCurrentSentence={() => {
-            onToggleSentenceFollowed(currentReadingSentence.id);
-            if (readingIndex < currentUnit.sentences.length - 1) {
-              setReadingIndex((prev) => prev + 1);
-            }
-          }}
-          onSelectReadingSentence={setReadingIndex}
+          onCompleteCurrentSentence={handleCompleteCurrentSentence}
+          onSelectReadingSentence={handleSelectReadingSentence}
         />
       )}
     </div>
