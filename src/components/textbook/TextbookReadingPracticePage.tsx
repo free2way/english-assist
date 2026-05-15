@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Mic2, Square } from 'lucide-react';
+import { Check, Mic2, Radio, Square } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { AzurePronunciationResult, StudyState, UnitBundle } from './types';
 
@@ -44,6 +44,22 @@ export function TextbookReadingPracticePage({
   onCompleteCurrentSentence,
   onSelectReadingSentence,
 }: Props) {
+  const recordingTitle = isAzureAssessing
+    ? '正在提交评分'
+    : isRecordingSentence
+      ? '正在录音'
+      : '准备开始录音';
+  const recordingDescription = isAzureAssessing
+    ? '正在把你的朗读提交给 Azure 发音评测，请稍等。'
+    : isRecordingSentence
+      ? '请朗读上面的英文句子；读完后，点下面红色按钮结束录音并提交评分。'
+      : '点下面按钮开始录音，系统会边录边准备发音评测。';
+  const recordingButtonLabel = isAzureAssessing
+    ? '正在评分...'
+    : isRecordingSentence
+      ? '结束录音并提交评分'
+      : '开始录音朗读';
+
   return (
     <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
@@ -64,29 +80,50 @@ export function TextbookReadingPracticePage({
             </div>
             <div className="text-2xl font-black text-slate-800 leading-relaxed">{currentReadingSentence.text}</div>
             <div className="text-sm text-slate-500 mt-3">{currentReadingSentence.translation}</div>
-            <div className="mt-6 flex flex-col items-start gap-4">
+            <div
+              className={cn(
+                'mt-6 rounded-3xl border p-5 transition-all',
+                isAzureAssessing
+                  ? 'border-blue-100 bg-blue-50'
+                  : isRecordingSentence
+                    ? 'border-red-100 bg-red-50'
+                    : 'border-purple-100 bg-white',
+              )}
+            >
+              <div className="flex items-start gap-3 mb-4">
+                <div
+                  className={cn(
+                    'w-10 h-10 rounded-2xl flex items-center justify-center',
+                    isAzureAssessing
+                      ? 'bg-blue-100 text-blue-600'
+                      : isRecordingSentence
+                        ? 'bg-red-100 text-red-600'
+                        : 'bg-purple-100 text-purple-600',
+                  )}
+                >
+                  {isRecordingSentence ? <Radio size={20} className="animate-pulse" /> : <Mic2 size={20} />}
+                </div>
+                <div>
+                  <div className="text-sm font-black text-slate-800">{recordingTitle}</div>
+                  <div className="text-sm text-slate-600 mt-1">{recordingDescription}</div>
+                </div>
+              </div>
               <button
                 onClick={onToggleRecording}
                 disabled={isAzureAssessing}
                 className={cn(
-                  'w-20 h-20 rounded-full flex items-center justify-center shadow-lg transition-all',
+                  'w-full sm:w-auto px-5 py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-all text-sm font-black',
                   isAzureAssessing
-                    ? 'bg-slate-200 text-slate-500'
+                    ? 'bg-slate-200 text-slate-500 cursor-wait'
                     : isRecordingSentence
-                      ? 'bg-red-500 text-white animate-pulse'
+                      ? 'bg-red-500 text-white shadow-red-100 hover:bg-red-600 active:scale-95'
                       : 'bg-purple-500 text-white hover:scale-105 active:scale-95',
                 )}
                 aria-label={isRecordingSentence ? '停止录音并提交评测' : '开始录音并朗读'}
               >
-                {isRecordingSentence ? <Square size={28} /> : <Mic2 size={30} />}
+                {isRecordingSentence ? <Square size={18} /> : <Mic2 size={18} />}
+                {recordingButtonLabel}
               </button>
-              <div className="text-sm font-bold text-slate-700">
-                {isAzureAssessing
-                  ? '正在提交 Azure 评测...'
-                  : isRecordingSentence
-                    ? '正在录音，请朗读；读完后再点一次麦克风提交评测'
-                    : '点一下麦克风开始录音，读完后再点一次停止并评测'}
-              </div>
             </div>
             <div className="flex flex-wrap gap-3 mt-2">
               <button onClick={() => onPlaySentence(currentReadingSentence.text)} className="px-4 py-3 rounded-2xl bg-white border border-slate-100 text-blue-500 text-sm font-bold">
