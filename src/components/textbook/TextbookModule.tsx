@@ -179,11 +179,11 @@ export function TextbookModule({
     if (isRecordingSentence && pronunciationSessionRef.current) {
       setIsAzureAssessing(true);
       try {
+        const { recognizedText, assessment, weakWords } = await pronunciationSessionRef.current.stop();
+        pronunciationSessionRef.current = null;
         mediaRecorderRef.current?.stop();
         mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
-        const { recognizedText, assessment, weakWords } = await pronunciationSessionRef.current.stop();
-        pronunciationSessionRef.current = null;
         setRecognizedSentenceText(recognizedText);
         setPronunciationScore(assessment.pronunciationScore);
         setAzureAssessment(assessment);
@@ -217,6 +217,8 @@ export function TextbookModule({
         setAzureAssessmentError(message);
         setRecordingError(message);
       } finally {
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
         setIsRecordingSentence(false);
         setIsAzureAssessing(false);
       }

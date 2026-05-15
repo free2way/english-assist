@@ -91,6 +91,9 @@ const parsePronunciationAssessmentResult = (result: any, SpeechSDK?: any): {
   const parsed = jsonResult ? JSON.parse(jsonResult) : null;
   const bestResult = parsed?.NBest?.[0] || {};
   const assessment = bestResult?.PronunciationAssessment || {};
+  if (!assessment || assessment.PronScore === undefined) {
+    throw new Error('Azure 没有返回发音评分，请确认朗读内容清晰并重新评测。');
+  }
   const words = (bestResult?.Words || []).map((item: any) => ({
     word: String(item.Word || ''),
     accuracyScore: Number(item.PronunciationAssessment?.AccuracyScore || 0),
@@ -132,6 +135,8 @@ const parsePronunciationAssessmentResult = (result: any, SpeechSDK?: any): {
     weakWords,
   };
 };
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function speakTextWithAzure({
   token,
@@ -177,11 +182,21 @@ export async function createPronunciationAssessmentSession({
   pronunciationConfig.applyTo(recognizer);
 
   let latestResult: any = null;
+  let latestError = '';
+
+  const hasAssessmentPayload = (result: any) => {
+    const jsonResult = result?.properties?.getProperty?.(SpeechSDK.PropertyId.SpeechServiceResponse_JsonResult);
+    return Boolean(result?.text?.trim() || jsonResult);
+  };
 
   recognizer.recognized = (_sender: any, event: any) => {
-    if (event?.result?.text?.trim()) {
+    if (hasAssessmentPayload(event?.result)) {
       latestResult = event.result;
     }
+  };
+
+  recognizer.canceled = (_sender: any, event: any) => {
+    latestError = event?.errorDetails || event?.reason || 'Azure Speech recognition canceled';
   };
 
   await new Promise<void>((resolve, reject) => {
@@ -199,8 +214,15 @@ export async function createPronunciationAssessmentSession({
           (error: any) => reject(error),
         );
       });
+      if (!latestResult) {
+        // The final recognized event can arrive just after stop resolves in browser SDKs.
+        await wait(800);
+      }
       try {
         if (!latestResult) {
+          if (latestError) {
+            throw new Error(`Azure 发音评测中断：${latestError}`);
+          }
           throw new Error('没有识别到清晰的语音内容，请再试一次。');
         }
         return parsePronunciationAssessmentResult(latestResult, SpeechSDK);
