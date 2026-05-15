@@ -12,6 +12,7 @@ export interface AuthUser {
   semester: string;
   school: string;
   role: 'admin' | 'user';
+  selectedTextbookId?: string;
 }
 
 export interface SessionInfo {
@@ -99,6 +100,7 @@ export interface AIServiceConfig {
 }
 
 interface DbUserRow extends AuthUser {
+  selected_textbook_id?: string | null;
   password_hash: string;
   password_salt: string;
   created_at: string;
@@ -135,6 +137,7 @@ const schemaStatements = [
       semester TEXT NOT NULL,
       school TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
+      selected_textbook_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `,
@@ -278,6 +281,7 @@ const mapUser = (row: DbUserRow): AuthUser => ({
   semester: row.semester,
   school: row.school,
   role: row.role,
+  selectedTextbookId: row.selected_textbook_id ? String(row.selected_textbook_id) : undefined,
 });
 
 const mapTextbookSummary = (row: any): TextbookSummary => ({
@@ -330,6 +334,12 @@ const createDefaultAdmin = async () => {
       'admin',
     ]
   );
+};
+
+const ensureUserPreferenceColumns = async () => {
+  const columns = await queryAll<{ name: string }>('PRAGMA table_info(users)');
+  if (columns.some((column) => column.name === 'selected_textbook_id')) return;
+  await executeStatement('ALTER TABLE users ADD COLUMN selected_textbook_id TEXT');
 };
 
 const ensureAIServiceConfigTable = async () => {
@@ -398,6 +408,7 @@ export const initializeDatabase = async () => {
       for (const statement of schemaStatements) {
         await executeStatement(statement);
       }
+      await ensureUserPreferenceColumns();
       await createDefaultAdmin();
     })();
   }
@@ -408,7 +419,7 @@ export const initializeDatabase = async () => {
 const getUserById = async (id: string) =>
   (await queryFirst<DbUserRow>(
     `
-      SELECT id, username, grade, semester, school, role, password_hash, password_salt, created_at
+      SELECT id, username, grade, semester, school, role, selected_textbook_id, password_hash, password_salt, created_at
       FROM users
       WHERE id = ?
     `,
@@ -440,7 +451,7 @@ export const listUsers = async (): Promise<AuthUser[]> => {
   await initializeDatabase();
   const rows = await queryAll<DbUserRow>(
     `
-      SELECT id, username, grade, semester, school, role, password_hash, password_salt, created_at
+      SELECT id, username, grade, semester, school, role, selected_textbook_id, password_hash, password_salt, created_at
       FROM users
       ORDER BY created_at DESC
     `
@@ -495,7 +506,7 @@ export const createSessionForCredentials = async (username: string, password: st
   await initializeDatabase();
   const user = (await queryFirst<DbUserRow>(
     `
-      SELECT id, username, grade, semester, school, role, password_hash, password_salt, created_at
+      SELECT id, username, grade, semester, school, role, selected_textbook_id, password_hash, password_salt, created_at
       FROM users
       WHERE lower(username) = ?
     `,
@@ -521,6 +532,7 @@ export const getUserByToken = async (token: string): Promise<AuthUser | null> =>
         users.semester,
         users.school,
         users.role,
+        users.selected_textbook_id,
         users.password_hash,
         users.password_salt,
         users.created_at,
@@ -550,6 +562,35 @@ export const deleteSession = async (token: string) => {
 export const cleanupExpiredSessions = async () => {
   await initializeDatabase();
   await executeStatement('DELETE FROM sessions WHERE expires_at <= ?', [new Date().toISOString()]);
+};
+
+export const updateSelectedTextbookForUser = async (
+  userId: string,
+  textbookId: string
+): Promise<AuthUser> => {
+  await initializeDatabase();
+  const textbook = await queryFirst<{ id: string }>(
+    'SELECT id FROM textbooks WHERE id = ?',
+    [textbookId]
+  );
+  if (!textbook) {
+    throw new Error('教材不存在');
+  }
+
+  await executeStatement(
+    `
+      UPDATE users
+      SET selected_textbook_id = ?
+      WHERE id = ?
+    `,
+    [textbookId, userId]
+  );
+
+  const user = await getUserById(userId);
+  if (!user) {
+    throw new Error('用户不存在');
+  }
+  return mapUser(user);
 };
 
 const normalizeBaseURL = (value?: string) => {

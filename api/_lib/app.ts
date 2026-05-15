@@ -15,6 +15,7 @@ import {
   listTextbookSamples,
   listTextbooks,
   updateAIServiceConfig,
+  updateSelectedTextbookForUser,
   type AuthUser,
 } from './db.js';
 
@@ -219,6 +220,25 @@ app.get('/api/textbooks/:id', requireAuth, async (req, res) => {
     return;
   }
   res.json({ textbook });
+});
+
+app.put('/api/users/me/preferences', requireAuth, async (req, res) => {
+  const selectedTextbookId = typeof req.body?.selectedTextbookId === 'string' ? req.body.selectedTextbookId.trim() : '';
+  const user = (req as express.Request & { user: AuthUser }).user;
+
+  if (!selectedTextbookId) {
+    res.status(400).json({ error: '缺少当前教材标识' });
+    return;
+  }
+
+  try {
+    const updatedUser = await updateSelectedTextbookForUser(user.id, selectedTextbookId);
+    res.json({ user: updatedUser });
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : '保存当前教材失败',
+    });
+  }
 });
 
 app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {

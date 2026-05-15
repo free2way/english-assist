@@ -34,6 +34,7 @@ export interface AppUser {
   semester: string;
   school: string;
   role: 'admin' | 'user';
+  selectedTextbookId?: string;
 }
 
 export interface AIConfig {

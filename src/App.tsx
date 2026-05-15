@@ -89,6 +89,7 @@ interface AppUser {
   semester: string;
   school: string;
   role: 'admin' | 'user';
+  selectedTextbookId?: string;
 }
 
 interface AIConfig {
@@ -2839,6 +2840,7 @@ export default function App() {
 
       const savedId = localStorage.getItem(getSelectedTextbookStorageKey(currentUser.username));
       const preferred =
+        data.textbooks.find((item) => item.id === currentUser.selectedTextbookId) ||
         data.textbooks.find((item) => item.id === savedId) ||
         data.textbooks.find((item) => item.grade === currentUser.grade && item.semester === currentUser.semester) ||
         data.textbooks[0];
@@ -2853,6 +2855,24 @@ export default function App() {
       setIsTextbookLoading(false);
     }
   }, [currentUser]);
+
+  const handleSelectedTextbookChange = (textbookId: string) => {
+    setSelectedTextbookId(textbookId);
+    if (!currentUser || !textbookId) return;
+
+    localStorage.setItem(getSelectedTextbookStorageKey(currentUser.username), textbookId);
+    apiFetch<{ user: AppUser }>('/api/users/me/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ selectedTextbookId: textbookId }),
+    })
+      .then((data) => {
+        setCurrentUser(data.user);
+        setTextbookError('');
+      })
+      .catch((error) => {
+        setTextbookError(error instanceof Error ? error.message : '保存当前教材失败');
+      });
+  };
 
   useEffect(() => {
     if (!currentUser) return;
@@ -3300,7 +3320,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
                 <select
                   value={selectedTextbookId}
-                  onChange={(e) => setSelectedTextbookId(e.target.value)}
+                  onChange={(e) => handleSelectedTextbookChange(e.target.value)}
                   className="w-full sm:min-w-[260px] bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:border-blue-500 transition-all"
                   disabled={isTextbookLoading || textbooks.length === 0}
                 >
