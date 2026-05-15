@@ -40,6 +40,8 @@ export interface AIConfig {
   model: string;
   apiKey: string;
   baseURL?: string;
+  hasApiKey?: boolean;
+  updatedAt?: string;
 }
 
 export interface SentenceItem {

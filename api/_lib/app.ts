@@ -6,6 +6,7 @@ import {
   createUser,
   deleteSession,
   deleteUser,
+  getAIServiceConfig,
   getUserByToken,
   getTextbookContent,
   importAllTextbookSamples,
@@ -13,8 +14,9 @@ import {
   listUsers,
   listTextbookSamples,
   listTextbooks,
+  updateAIServiceConfig,
   type AuthUser,
-} from './db.js';
+} from './db';
 
 export const app = express();
 
@@ -94,6 +96,61 @@ app.get('/api/speech-token', requireAuth, async (_req, res) => {
   } catch (error) {
     res.status(502).json({
       error: error instanceof Error ? error.message : 'Azure Speech token 获取失败',
+    });
+  }
+});
+
+app.post('/api/ai/chat', requireAuth, async (req, res) => {
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+  if (!message) {
+    res.status(400).json({ error: '请输入要发送给 AI 的内容' });
+    return;
+  }
+
+  const config = await getAIServiceConfig({ includeSecret: true });
+  if (!config.apiKey) {
+    res.status(503).json({ error: 'AI 服务未配置，请管理员在系统管理中配置 API Key' });
+    return;
+  }
+
+  try {
+    const response = await fetch(`${config.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a friendly English speaking tutor for middle school students. Keep answers concise, encouraging, and useful for oral practice.',
+          },
+          { role: 'user', content: message },
+        ],
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      res.status(502).json({
+        error: data?.error?.message || `AI 服务调用失败 (${response.status})`,
+      });
+      return;
+    }
+
+    const reply = data?.choices?.[0]?.message?.content;
+    if (!reply) {
+      res.status(502).json({ error: 'AI 服务返回内容为空' });
+      return;
+    }
+
+    res.json({ message: String(reply) });
+  } catch (error) {
+    res.status(502).json({
+      error: error instanceof Error ? error.message : 'AI 服务调用失败',
     });
   }
 });
@@ -193,6 +250,19 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     return;
   }
   res.json({ ok: true });
+});
+
+app.get('/api/admin/ai-config', requireAuth, requireAdmin, async (_req, res) => {
+  res.json({ config: await getAIServiceConfig() });
+});
+
+app.put('/api/admin/ai-config', requireAuth, requireAdmin, async (req, res) => {
+  const config = await updateAIServiceConfig({
+    model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+    baseURL: typeof req.body?.baseURL === 'string' ? req.body.baseURL : undefined,
+    apiKey: typeof req.body?.apiKey === 'string' ? req.body.apiKey : undefined,
+  });
+  res.json({ config });
 });
 
 app.get('/api/admin/textbook-samples', requireAuth, requireAdmin, async (_req, res) => {

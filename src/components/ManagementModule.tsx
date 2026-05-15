@@ -64,7 +64,6 @@ interface ManagementModuleProps {
   gradeOptions: string[];
   semesterOptions: string[];
   defaultAIConfig: AIConfig;
-  aiConfigStorageKey: string;
   buildUnitBundlesFromTextbook: (textbook: TextbookContent | null) => UnitBundle[];
   loadStudyStateForUser: (username: string, textbookId: string, units: UnitBundle[]) => StudyState;
   createInitialStudyState: (units: UnitBundle[]) => StudyState;
@@ -83,7 +82,6 @@ export function ManagementModule({
   gradeOptions,
   semesterOptions,
   defaultAIConfig,
-  aiConfigStorageKey,
   buildUnitBundlesFromTextbook,
   loadStudyStateForUser,
   createInitialStudyState,
@@ -100,23 +98,8 @@ export function ManagementModule({
   const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'success'>('idle');
   const [textbookError, setTextbookError] = useState('');
   const [textbookContents, setTextbookContents] = useState<Record<string, TextbookContent>>({});
-  const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
-    const saved = localStorage.getItem(aiConfigStorageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return {
-          ...defaultAIConfig,
-          model: typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model : defaultAIConfig.model,
-          apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : defaultAIConfig.apiKey,
-          baseURL: typeof parsed.baseURL === 'string' && parsed.baseURL.trim() ? parsed.baseURL : defaultAIConfig.baseURL,
-        };
-      } catch {
-        return defaultAIConfig;
-      }
-    }
-    return defaultAIConfig;
-  });
+  const [aiConfig, setAiConfig] = useState<AIConfig>(defaultAIConfig);
+  const [aiConfigError, setAiConfigError] = useState('');
   const [newUser, setNewUser] = useState({
     username: '',
     password: '',
@@ -196,6 +179,24 @@ export function ManagementModule({
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  const loadAIConfig = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ config: AIConfig }>('/api/admin/ai-config');
+      setAiConfig({
+        ...defaultAIConfig,
+        ...data.config,
+        apiKey: '',
+      });
+      setAiConfigError('');
+    } catch (error) {
+      setAiConfigError(error instanceof Error ? error.message : '加载 AI 配置失败');
+    }
+  }, [apiFetch, defaultAIConfig]);
+
+  useEffect(() => {
+    loadAIConfig();
+  }, [loadAIConfig]);
 
   const loadSampleCatalog = useCallback(async () => {
     try {
@@ -283,13 +284,29 @@ export function ManagementModule({
     }
   };
 
-  const handleSaveAIConfig = () => {
+  const handleSaveAIConfig = async () => {
     setSaveStatus('saving');
-    localStorage.setItem(aiConfigStorageKey, JSON.stringify(aiConfig));
-    setTimeout(() => {
+    try {
+      const data = await apiFetch<{ config: AIConfig }>('/api/admin/ai-config', {
+        method: 'PUT',
+        body: JSON.stringify({
+          model: aiConfig.model,
+          baseURL: aiConfig.baseURL,
+          apiKey: aiConfig.apiKey,
+        }),
+      });
+      setAiConfig({
+        ...defaultAIConfig,
+        ...data.config,
+        apiKey: '',
+      });
+      setAiConfigError('');
       setSaveStatus('success');
       setTimeout(() => setSaveStatus('idle'), 2000);
-    }, 500);
+    } catch (error) {
+      setAiConfigError(error instanceof Error ? error.message : '保存 AI 配置失败');
+      setSaveStatus('idle');
+    }
   };
 
   const handleImportSample = async (sampleId: string) => {
@@ -669,7 +686,8 @@ export function ManagementModule({
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 ml-2">统一 AI 接口</label>
                 <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-sm text-slate-600">
-                  使用 OpenAI 兼容协议配置聊天模型与语音接口。你可以接 OpenAI，也可以接其他兼容 `/chat/completions` 和 `/audio/speech` 的服务。
+                  使用服务端统一保存的 OpenAI 兼容接口配置。所有用户的 AI 外教都会走这个配置，API Key 不会下发到浏览器。
+                  {aiConfig.hasApiKey && <span className="ml-2 font-bold text-emerald-600">当前已配置 API Key。</span>}
                 </div>
               </div>
 
@@ -687,11 +705,11 @@ export function ManagementModule({
                 <label className="text-xs font-bold text-slate-500 ml-2">选择模型</label>
                 <div className="grid grid-cols-1 gap-3">
                   {[
-                    { id: 'gpt-4o-mini', name: 'GPT-4o Mini (推荐)', desc: '性价比高，响应快速' },
+                    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (推荐)', desc: '适合英语陪练，速度快' },
+                    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: '更强的理解与生成能力' },
+                    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', desc: '性价比高，响应快速' },
                     { id: 'gpt-4o', name: 'GPT-4o', desc: '更强的理解和生成能力' },
-                    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', desc: '经济实惠' },
                     { id: 'deepseek-chat', name: 'DeepSeek Chat', desc: '国产模型，中文友好' },
-                    { id: 'claude-3-sonnet', name: 'Claude 3 Sonnet', desc: 'Anthropic 模型' },
                     { id: 'custom', name: '自定义模型', desc: '手动输入模型名称' },
                   ].map((model) => (
                     <button
@@ -699,7 +717,7 @@ export function ManagementModule({
                       onClick={() => setAiConfig({ ...aiConfig, model: model.id === 'custom' ? '' : model.id })}
                       className={cn(
                         'flex items-center justify-between p-4 rounded-2xl border transition-all text-left',
-                        aiConfig.model === model.id || (model.id === 'custom' && !['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo', 'deepseek-chat', 'claude-3-sonnet'].includes(aiConfig.model))
+                        aiConfig.model === model.id || (model.id === 'custom' && !['gemini-2.5-flash', 'gemini-2.5-pro', 'gpt-4o-mini', 'gpt-4o', 'deepseek-chat'].includes(aiConfig.model))
                           ? 'bg-purple-50 border-purple-200 ring-4 ring-purple-500/5'
                           : 'bg-slate-50 border-slate-100 hover:border-slate-200',
                       )}
@@ -714,14 +732,14 @@ export function ManagementModule({
                     </button>
                   ))}
                 </div>
-                {!['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo', 'deepseek-chat', 'claude-3-sonnet'].includes(aiConfig.model) && (
+                {!['gemini-2.5-flash', 'gemini-2.5-pro', 'gpt-4o-mini', 'gpt-4o', 'deepseek-chat'].includes(aiConfig.model) && (
                   <div className="mt-3">
                     <input
                       type="text"
                       value={aiConfig.model}
                       onChange={(e) => setAiConfig({ ...aiConfig, model: e.target.value })}
                       className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm outline-none focus:border-purple-500 transition-all"
-                      placeholder="输入自定义模型名称，例如: qwen-turbo, llama2-70b 等"
+                      placeholder="输入自定义模型名称，例如: gemini-2.0-flash, qwen-turbo 等"
                     />
                   </div>
                 )}
@@ -736,13 +754,15 @@ export function ManagementModule({
                     value={aiConfig.apiKey}
                     onChange={(e) => setAiConfig({ ...aiConfig, apiKey: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 pl-12 pr-4 text-sm outline-none focus:border-purple-500 transition-all"
-                    placeholder="请输入您的 API Key"
+                    placeholder={aiConfig.hasApiKey ? '已配置，留空则保持当前 Key' : '请输入 Gemini 或兼容服务 API Key'}
                   />
                 </div>
                 <p className="text-[10px] text-slate-400 ml-2">
-                  * API Key 将仅保存在本地浏览器中
+                  * API Key 将保存到服务端数据库，仅管理员可更新；普通用户只调用服务端代理。
                 </p>
               </div>
+
+              {aiConfigError && <p className="text-xs font-bold text-red-500">{aiConfigError}</p>}
 
               <button
                 onClick={handleSaveAIConfig}

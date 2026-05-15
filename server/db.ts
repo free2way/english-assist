@@ -90,6 +90,14 @@ export interface TextbookContent extends TextbookSummary {
   units: TextbookUnit[];
 }
 
+export interface AIServiceConfig {
+  model: string;
+  baseURL: string;
+  apiKey?: string;
+  hasApiKey: boolean;
+  updatedAt?: string;
+}
+
 interface DbUserRow extends AuthUser {
   password_hash: string;
   password_salt: string;
@@ -110,6 +118,9 @@ const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin1234';
 const DEFAULT_SESSION_HOURS = 24 * 7;
 const ALLOWED_SESSION_HOURS = new Set([12, 24 * 7, 24 * 30]);
+const DEFAULT_AI_MODEL = process.env.AI_MODEL?.trim() || 'gemini-2.5-flash';
+const DEFAULT_AI_BASE_URL = process.env.AI_BASE_URL?.trim() || 'https://generativelanguage.googleapis.com/v1beta/openai';
+const DEFAULT_AI_API_KEY = process.env.GEMINI_API_KEY?.trim() || process.env.AI_API_KEY?.trim() || '';
 
 let client: Client | null = null;
 
@@ -228,6 +239,15 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_textbook_sentences_unit_id ON textbook_sentences(unit_id)`,
   `CREATE INDEX IF NOT EXISTS idx_textbook_phrases_unit_id ON textbook_phrases(unit_id)`,
   `CREATE INDEX IF NOT EXISTS idx_textbook_patterns_unit_id ON textbook_patterns(unit_id)`,
+  `
+    CREATE TABLE IF NOT EXISTS ai_service_config (
+      id TEXT PRIMARY KEY CHECK(id = 'global'),
+      model TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      api_key TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
 ];
 
 let initializationPromise: Promise<void> | null = null;
@@ -321,6 +341,34 @@ const createDefaultAdmin = async () => {
   );
 };
 
+const createDefaultAIConfig = async () => {
+  const existingConfig = await queryFirst<{ id: string; api_key: string }>(
+    'SELECT id, api_key FROM ai_service_config WHERE id = ?',
+    ['global']
+  );
+  if (existingConfig) {
+    if (!existingConfig.api_key && DEFAULT_AI_API_KEY) {
+      await executeStatement(
+        `
+          UPDATE ai_service_config
+          SET api_key = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `,
+        [DEFAULT_AI_API_KEY, 'global']
+      );
+    }
+    return;
+  }
+
+  await executeStatement(
+    `
+      INSERT INTO ai_service_config (id, model, base_url, api_key)
+      VALUES (?, ?, ?, ?)
+    `,
+    ['global', DEFAULT_AI_MODEL, DEFAULT_AI_BASE_URL, DEFAULT_AI_API_KEY]
+  );
+};
+
 export const initializeDatabase = async () => {
   if (!initializationPromise) {
     initializationPromise = (async () => {
@@ -348,6 +396,7 @@ export const initializeDatabase = async () => {
         await executeStatement(statement);
       }
       await createDefaultAdmin();
+      await createDefaultAIConfig();
     })();
   }
 
@@ -499,6 +548,77 @@ export const deleteSession = async (token: string) => {
 export const cleanupExpiredSessions = async () => {
   await initializeDatabase();
   await executeStatement('DELETE FROM sessions WHERE expires_at <= ?', [new Date().toISOString()]);
+};
+
+const normalizeBaseURL = (value?: string) => {
+  let baseURL = (value || DEFAULT_AI_BASE_URL).trim();
+  if (!baseURL.startsWith('http://') && !baseURL.startsWith('https://')) {
+    baseURL = `https://${baseURL}`;
+  }
+  return baseURL.replace(/\/+$/, '');
+};
+
+const mapAIConfig = (
+  row: { model: string; base_url: string; api_key: string; updated_at?: string },
+  includeSecret = false
+): AIServiceConfig => ({
+  model: String(row.model || DEFAULT_AI_MODEL),
+  baseURL: normalizeBaseURL(String(row.base_url || DEFAULT_AI_BASE_URL)),
+  apiKey: includeSecret ? String(row.api_key || '') : undefined,
+  hasApiKey: Boolean(String(row.api_key || '').trim()),
+  updatedAt: row.updated_at ? String(row.updated_at) : undefined,
+});
+
+export const getAIServiceConfig = async (options: { includeSecret?: boolean } = {}): Promise<AIServiceConfig> => {
+  await initializeDatabase();
+  const row = await queryFirst<{ model: string; base_url: string; api_key: string; updated_at?: string }>(
+    `
+      SELECT model, base_url, api_key, updated_at
+      FROM ai_service_config
+      WHERE id = ?
+    `,
+    ['global']
+  );
+
+  if (!row) {
+    return {
+      model: DEFAULT_AI_MODEL,
+      baseURL: normalizeBaseURL(DEFAULT_AI_BASE_URL),
+      apiKey: options.includeSecret ? DEFAULT_AI_API_KEY : undefined,
+      hasApiKey: Boolean(DEFAULT_AI_API_KEY),
+    };
+  }
+
+  return mapAIConfig(row, Boolean(options.includeSecret));
+};
+
+export const updateAIServiceConfig = async (input: {
+  model?: string;
+  baseURL?: string;
+  apiKey?: string;
+}): Promise<AIServiceConfig> => {
+  await initializeDatabase();
+  const current = await getAIServiceConfig({ includeSecret: true });
+  const model = input.model?.trim() || current.model || DEFAULT_AI_MODEL;
+  const baseURL = normalizeBaseURL(input.baseURL || current.baseURL || DEFAULT_AI_BASE_URL);
+  const nextApiKey = typeof input.apiKey === 'string' && input.apiKey.trim()
+    ? input.apiKey.trim()
+    : current.apiKey || '';
+
+  await executeStatement(
+    `
+      INSERT INTO ai_service_config (id, model, base_url, api_key, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        model = excluded.model,
+        base_url = excluded.base_url,
+        api_key = excluded.api_key,
+        updated_at = CURRENT_TIMESTAMP
+    `,
+    ['global', model, baseURL, nextApiKey]
+  );
+
+  return getAIServiceConfig();
 };
 
 export const changePassword = async (

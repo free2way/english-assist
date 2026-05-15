@@ -98,9 +98,9 @@ interface AIConfig {
 }
 
 const DEFAULT_AI_CONFIG: AIConfig = {
-  model: 'gpt-4o-mini',
+  model: 'gemini-2.5-flash',
   apiKey: '',
-  baseURL: 'https://api.openai.com/v1'
+  baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai'
 };
 
 const AI_CONFIG_STORAGE_KEY = 'ace_ai_config';
@@ -1865,33 +1865,15 @@ const getBaseUrl = (url?: string) => {
   return baseUrl.replace(/\/+$/, '');
 };
 
-const generateChatResponse = async (userText: string): Promise<string> => {
-  const config = getAIConfig();
-  if (!config.apiKey) throw new Error('请先在系统管理中配置 API Key');
-
-  const baseUrl = getBaseUrl(config.baseURL);
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+const generateChatResponse = async (
+  userText: string,
+  authenticatedFetch: <T,>(path: string, init?: RequestInit) => Promise<T>,
+): Promise<string> => {
+  const data = await authenticatedFetch<{ message: string }>('/api/ai/chat', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: 'system', content: "You are a friendly English tutor. Correct the student's grammar if necessary, but keep the conversation flowing. Use simple but natural English suitable for middle/high school students." },
-        { role: 'user', content: `You are a friendly and professional English tutor. Help the student practice English. Keep responses concise and encouraging. Student says: ${userText}` }
-      ]
-    })
+    body: JSON.stringify({ message: userText }),
   });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Failed to fetch AI response (${response.status})`);
-  }
-
-  const data = await response.json();
-  return data.choices[0].message.content;
+  return data.message;
 };
 
 const generateTTS = async (text: string, accent: 'US' | 'UK'): Promise<boolean> => {
@@ -2025,12 +2007,14 @@ const AITutor = ({
   orchestration,
   onCompleteStage,
   onAddMistake,
+  apiFetch,
   fetchSpeechToken,
 }: {
   currentUnit: UnitBundle | null;
   orchestration: AgentOrchestration;
   onCompleteStage: (stage: LessonStageKey) => void;
   onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
+  apiFetch: <T,>(path: string, init?: RequestInit) => Promise<T>;
   fetchSpeechToken: () => Promise<SpeechTokenResponse>;
 }) => {
   const [tutorMode, setTutorMode] = useState<'unit' | 'free-talk'>('unit');
@@ -2183,7 +2167,7 @@ const AITutor = ({
         : currentUnit
           ? `You are the Speaking Coach Agent in a multi-agent English learning system. Current orchestration goal: ${activeSpeakingPlan?.rationale || coachConfig.goal}. Unit: "${currentUnit.title}". Goal: ${coachConfig.goal}. Ask short follow-up questions and help the student answer more naturally. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}. Student response: ${userText}`
           : userText;
-      const aiResponse = await generateChatResponse(lessonPrompt);
+      const aiResponse = await generateChatResponse(lessonPrompt, apiFetch);
       setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
       onCompleteStage('speaking');
       
@@ -3429,6 +3413,7 @@ export default function App() {
                   orchestration={agentOrchestration}
                   onCompleteStage={handleCompleteStage}
                   onAddMistake={handleAddMistake}
+                  apiFetch={apiFetch}
                   fetchSpeechToken={() => apiFetch<SpeechTokenResponse>('/api/speech-token')}
                 />
               )}
@@ -3471,7 +3456,6 @@ export default function App() {
                   gradeOptions={GRADES}
                   semesterOptions={SEMESTERS}
                   defaultAIConfig={DEFAULT_AI_CONFIG}
-                  aiConfigStorageKey={AI_CONFIG_STORAGE_KEY}
                   buildUnitBundlesFromTextbook={buildUnitBundlesFromTextbook}
                   loadStudyStateForUser={loadStudyStateForUser}
                   createInitialStudyState={createInitialStudyState}

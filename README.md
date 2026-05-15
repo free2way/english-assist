@@ -23,6 +23,9 @@
 
 - `TURSO_DATABASE_URL`
 - `TURSO_AUTH_TOKEN`
+- `GEMINI_API_KEY` 可选，用作全站 AI 外教默认 Key
+- `AI_MODEL` 可选，默认 `gemini-2.5-flash`
+- `AI_BASE_URL` 可选，默认 `https://generativelanguage.googleapis.com/v1beta/openai`
 - `PORT` 可选，默认 `3001`
 - Vercel Root Directory 保持当前项目根目录
 - Build Command 使用 `npm run build`
@@ -33,6 +36,8 @@
 - 本地开发：默认走 `file:` 模式的 libSQL，本地数据库文件仍在 `data/app.db`
 - 线上部署：只要配置 `TURSO_DATABASE_URL` 和 `TURSO_AUTH_TOKEN`，同一套代码会直接切到 Turso
 - `/api/health` 会返回当前数据库驱动，便于确认是否已经切到 `turso-libsql`
+- 管理员可在“系统管理 -> AI 模型配置”维护全站 AI 配置；也可调用 `GET/PUT /api/admin/ai-config`
+- 普通用户的 AI 外教调用 `POST /api/ai/chat`，由服务端代理转发到 OpenAI 兼容接口，API Key 不下发到浏览器
 
 ## Vercel Structure
 
