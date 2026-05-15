@@ -16,6 +16,8 @@ export type MistakeReason =
   | 'grammar_rule'
   | 'word_order'
   | 'sentence_judgement';
+export type AgentRoleKey = 'orchestrator' | 'speakingCoach' | 'assessment' | 'teacherInsight';
+export type AgentSignalType = 'diagnosis' | 'plan' | 'practice' | 'assessment' | 'feedback' | 'teacher-insight';
 
 export interface VocabItem {
   id: string;
@@ -71,6 +73,17 @@ export interface PronunciationAssessmentRecord {
   fluencyScore: number;
   completenessScore: number;
   weakWords: string[];
+  createdAt: string;
+}
+
+export interface AgentEventRecord {
+  id: string;
+  agent: AgentRoleKey;
+  type: AgentSignalType;
+  title: string;
+  detail: string;
+  unitId?: string;
+  stage?: LessonStageKey;
   createdAt: string;
 }
 
@@ -199,6 +212,7 @@ export interface StudyState {
   dailyCheckins: DailyCheckinRecord[];
   mistakes: MistakeRecord[];
   pronunciationAssessments: PronunciationAssessmentRecord[];
+  agentEvents: AgentEventRecord[];
 }
 
 export interface ReviewPackItem {

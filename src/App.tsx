@@ -353,6 +353,54 @@ interface PronunciationAssessmentRecord {
   createdAt: string;
 }
 
+type AgentRoleKey = 'orchestrator' | 'speakingCoach' | 'assessment' | 'teacherInsight';
+type AgentSignalType = 'diagnosis' | 'plan' | 'practice' | 'assessment' | 'feedback' | 'teacher-insight';
+
+interface AgentEventRecord {
+  id: string;
+  agent: AgentRoleKey;
+  type: AgentSignalType;
+  title: string;
+  detail: string;
+  unitId?: string;
+  stage?: LessonStageKey;
+  createdAt: string;
+}
+
+interface AgentPlanItem {
+  id: string;
+  agent: AgentRoleKey;
+  title: string;
+  rationale: string;
+  nextAction: string;
+  stage: LessonStageKey;
+  priority: 'high' | 'medium' | 'low';
+}
+
+interface AgentOrchestration {
+  roles: Array<{
+    id: AgentRoleKey;
+    name: string;
+    responsibility: string;
+    input: string;
+    output: string;
+  }>;
+  flow: Array<{
+    agent: AgentRoleKey;
+    label: string;
+    status: 'done' | 'active' | 'waiting';
+  }>;
+  plan: AgentPlanItem[];
+  assessmentSummary: string;
+  teacherInsight: {
+    riskLevel: 'stable' | 'watch' | 'intervene';
+    summary: string;
+    triggers: string[];
+    actions: string[];
+  };
+  trace: AgentEventRecord[];
+}
+
 interface StudyState {
   currentUnitId: string;
   currentStage: LessonStageKey;
@@ -364,6 +412,7 @@ interface StudyState {
   dailyCheckins: DailyCheckinRecord[];
   challengeAttempts: ChallengeAttempt[];
   pronunciationAssessments: PronunciationAssessmentRecord[];
+  agentEvents: AgentEventRecord[];
 }
 
 interface RecommendationItem {
@@ -372,6 +421,9 @@ interface RecommendationItem {
   description: string;
   stage: LessonStageKey;
   priority: 'high' | 'medium' | 'low';
+  rationale?: string;
+  sourceAgent?: AgentRoleKey;
+  targetAgent?: AgentRoleKey;
 }
 
 interface ReviewPackItem {
@@ -752,6 +804,7 @@ const createInitialStudyState = (units: UnitBundle[]): StudyState => ({
   dailyCheckins: [],
   challengeAttempts: [],
   pronunciationAssessments: [],
+  agentEvents: [],
 });
 
 const normalizeStudyState = (raw: Partial<StudyState> | null, units: UnitBundle[]): StudyState => {
@@ -772,6 +825,7 @@ const normalizeStudyState = (raw: Partial<StudyState> | null, units: UnitBundle[
     dailyCheckins: Array.isArray(raw.dailyCheckins) ? raw.dailyCheckins.slice(0, 30) : [],
     challengeAttempts: Array.isArray(raw.challengeAttempts) ? raw.challengeAttempts.slice(0, 20) : [],
     pronunciationAssessments: Array.isArray(raw.pronunciationAssessments) ? raw.pronunciationAssessments.slice(0, 30) : [],
+    agentEvents: Array.isArray(raw.agentEvents) ? raw.agentEvents.slice(0, 40) : [],
   };
 };
 
@@ -924,6 +978,166 @@ const getWeaknessSummary = (studyState: StudyState) => {
   ];
 };
 
+const AGENT_ROLES: AgentOrchestration['roles'] = [
+  {
+    id: 'orchestrator',
+    name: '学习编排 Agent',
+    responsibility: '诊断进度并决定下一步任务',
+    input: '教材进度、错题、发音记录、打卡状态',
+    output: '今日计划与任务优先级',
+  },
+  {
+    id: 'speakingCoach',
+    name: '口语陪练 Agent',
+    responsibility: '围绕教材话题做目标导向对练',
+    input: '当前单元、重点句、编排目标',
+    output: '对话练习、表达纠错、口语任务完成信号',
+  },
+  {
+    id: 'assessment',
+    name: '评测反馈 Agent',
+    responsibility: '归因听写与口语评测结果',
+    input: '错题、发音分、弱读词、听写答案',
+    output: '复习包、薄弱项、下一轮训练建议',
+  },
+  {
+    id: 'teacherInsight',
+    name: '教师洞察 Agent',
+    responsibility: '把学生信号转成教师可行动建议',
+    input: '学习记录、风险触发条件、班级趋势',
+    output: '风险等级、干预建议、周报素材',
+  },
+];
+
+const AGENT_LABELS: Record<AgentRoleKey, string> = {
+  orchestrator: '学习编排 Agent',
+  speakingCoach: '口语陪练 Agent',
+  assessment: '评测反馈 Agent',
+  teacherInsight: '教师洞察 Agent',
+};
+
+const createAgentEvent = (
+  input: Omit<AgentEventRecord, 'id' | 'createdAt'>
+): AgentEventRecord => ({
+  ...input,
+  id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  createdAt: new Date().toISOString(),
+});
+
+const appendAgentEvent = (events: AgentEventRecord[], event: Omit<AgentEventRecord, 'id' | 'createdAt'>) => [
+  createAgentEvent(event),
+  ...events,
+].slice(0, 40);
+
+const buildTeacherInsight = (unit: UnitBundle | null, studyState: StudyState): AgentOrchestration['teacherInsight'] => {
+  const mistakes = studyState.mistakes.filter((item) => !unit || item.unitId === unit.id);
+  const speakingMistakes = mistakes.filter((item) => item.category === 'speaking');
+  const dictationMistakes = mistakes.filter((item) => item.category === 'dictation');
+  const pronunciationRecords = studyState.pronunciationAssessments.filter((item) => !unit || item.unitId === unit.id);
+  const lowPronunciation = pronunciationRecords.filter((item) => item.pronunciationScore < 75);
+  const challengeStatus = getUnitChallengeStatus(unit, studyState);
+  const triggers: string[] = [];
+  const actions: string[] = [];
+
+  if (mistakes.length >= 4) {
+    triggers.push(`累计 ${mistakes.length} 条错题`);
+    actions.push('安排 10 分钟错题复盘，优先处理重复问题');
+  }
+  if (speakingMistakes.length >= 2 || lowPronunciation.length > 0) {
+    triggers.push('口语或发音信号偏弱');
+    actions.push('让学生先跟读重点句，再进行一次短口语输出');
+  }
+  if (dictationMistakes.length >= 2) {
+    triggers.push('听写漏词或句型错误偏多');
+    actions.push('布置 3 条重点句听写，检查主谓和关键词');
+  }
+  if (challengeStatus.progress < 50) {
+    triggers.push(`闯关准备度 ${challengeStatus.progress}%`);
+    actions.push('先完成编排 Agent 推荐的高优先任务，不急于闯关');
+  }
+
+  if (triggers.length === 0) {
+    triggers.push('当前没有明显风险触发');
+    actions.push('保持当前学习节奏，下一步可进入口语拓展');
+  }
+
+  const riskLevel = triggers.length >= 3
+    ? 'intervene'
+    : triggers.length >= 2 || mistakes.length >= 2
+      ? 'watch'
+      : 'stable';
+
+  return {
+    riskLevel,
+    summary: riskLevel === 'intervene'
+      ? '建议教师本周主动干预，先清理错题和发音弱项。'
+      : riskLevel === 'watch'
+        ? '建议持续观察，完成一次复盘后再推进新任务。'
+        : '学习状态稳定，可继续按计划推进。',
+    triggers,
+    actions,
+  };
+};
+
+const buildAgentOrchestration = (unit: UnitBundle | null, studyState: StudyState): AgentOrchestration => {
+  const recommendations = generateDailyRecommendations(unit, studyState);
+  const reviewPack = buildReviewPack(studyState);
+  const pronunciationRecords = unit
+    ? studyState.pronunciationAssessments.filter((item) => item.unitId === unit.id)
+    : studyState.pronunciationAssessments;
+  const latestPronunciation = pronunciationRecords[0];
+  const teacherInsight = buildTeacherInsight(unit, studyState);
+  const hasCurrentTask = unit
+    ? !studyState.completedTaskIds.includes(createTaskId(unit.id, studyState.currentStage))
+    : false;
+
+  const plan: AgentPlanItem[] = recommendations.slice(0, 3).map((item) => ({
+    id: `agent-plan-${item.id}`,
+    agent: item.sourceAgent || 'orchestrator',
+    title: item.title,
+    rationale: item.rationale || item.description,
+    nextAction: `打开${getStageLabel(item.stage)}并完成任务`,
+    stage: item.stage,
+    priority: item.priority,
+  }));
+
+  const flow: AgentOrchestration['flow'] = [
+    {
+      agent: 'orchestrator',
+      label: unit ? `已读取 ${unit.unit} 的进度与错题` : '等待教材数据',
+      status: unit ? 'done' : 'waiting',
+    },
+    {
+      agent: 'speakingCoach',
+      label: studyState.currentStage === 'speaking' ? '正在驱动口语陪练' : '等待编排任务触发',
+      status: studyState.currentStage === 'speaking' ? 'active' : hasCurrentTask ? 'waiting' : 'done',
+    },
+    {
+      agent: 'assessment',
+      label: reviewPack.length > 0 || latestPronunciation ? '已形成复盘信号' : '等待练习结果回流',
+      status: reviewPack.length > 0 || latestPronunciation ? 'active' : 'waiting',
+    },
+    {
+      agent: 'teacherInsight',
+      label: `${teacherInsight.riskLevel === 'stable' ? '稳定' : teacherInsight.riskLevel === 'watch' ? '观察' : '需干预'}：${teacherInsight.triggers[0]}`,
+      status: studyState.agentEvents.some((event) => event.agent === 'teacherInsight') ? 'done' : 'active',
+    },
+  ];
+
+  return {
+    roles: AGENT_ROLES,
+    flow,
+    plan,
+    assessmentSummary: latestPronunciation
+      ? `最近一次发音 ${latestPronunciation.pronunciationScore} 分，弱词：${latestPronunciation.weakWords.slice(0, 3).join('、') || '暂无'}`
+      : reviewPack[0]
+        ? `优先复盘：${reviewPack[0].reasonLabel}，${reviewPack[0].summary}`
+        : '暂无明显薄弱项，建议继续推进当前课时。',
+    teacherInsight,
+    trace: studyState.agentEvents.slice(0, 6),
+  };
+};
+
 const loadStudyStateForUser = (username: string, textbookId: string, units: UnitBundle[]) => {
   const raw = localStorage.getItem(getStudyStorageKey(username, textbookId));
   if (!raw) return createInitialStudyState(units);
@@ -966,6 +1180,9 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
       description: `${reviewPack[0].reasonLabel}优先处理，${latestMistake.prompt} 建议今天先回练。`,
       stage: latestMistake.stage,
       priority: 'high',
+      rationale: `评测反馈 Agent 发现最新错点属于「${reviewPack[0].reasonLabel}」，需要先回流给学习编排 Agent 调整路径。`,
+      sourceAgent: 'assessment',
+      targetAgent: 'orchestrator',
     });
   }
 
@@ -978,6 +1195,9 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
       description: currentStageMeta.description,
       stage: currentStageMeta.key,
       priority: 'high',
+      rationale: `学习编排 Agent 判断当前课时尚未完成，需要先保持主线连续。`,
+      sourceAgent: 'orchestrator',
+      targetAgent: currentStageMeta.key === 'speaking' ? 'speakingCoach' : 'assessment',
     });
   }
 
@@ -988,6 +1208,9 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
       description: '先把词义和发音补稳，再进入听写和口语输出会更顺。',
       stage: 'preview',
       priority: 'medium',
+      rationale: '学习编排 Agent 检测到仍有未掌握词汇，先补输入再做输出。',
+      sourceAgent: 'orchestrator',
+      targetAgent: 'assessment',
     });
   }
 
@@ -998,6 +1221,9 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
       description: '逐句跟读重点句，帮助后面的听写和表达更顺。',
       stage: 'reading',
       priority: 'medium',
+      rationale: '学习编排 Agent 检测到重点句跟读未完成，先补句型语料。',
+      sourceAgent: 'orchestrator',
+      targetAgent: 'assessment',
     });
   }
 
@@ -1008,6 +1234,9 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
       description: `先完成 ${unit.grammar.title}，再做听写和口语会更稳。`,
       stage: 'reading',
       priority: 'medium',
+      rationale: '评测反馈 Agent 将语法练习作为后续听写和口语输出的支撑任务。',
+      sourceAgent: 'assessment',
+      targetAgent: 'orchestrator',
     });
   }
 
@@ -1018,6 +1247,9 @@ const generateDailyRecommendations = (unit: UnitBundle | null, studyState: Study
       description: '围绕本单元主题回答 2-3 个问题，把输入真正转成输出。',
       stage: 'speaking',
       priority: 'low',
+      rationale: '学习编排 Agent 判断输入任务已有基础，可以交给口语陪练 Agent 做输出训练。',
+      sourceAgent: 'orchestrator',
+      targetAgent: 'speakingCoach',
     });
   }
 
@@ -1185,12 +1417,137 @@ const TaskCard = ({ task }: any) => {
   );
 };
 
+const AgentOrchestrationPanel = ({
+  orchestration,
+  onOpenStage,
+}: {
+  orchestration: AgentOrchestration;
+  onOpenStage: (stage: LessonStageKey) => void;
+}) => {
+  const riskStyles = {
+    stable: 'bg-emerald-50 border-emerald-100 text-emerald-700',
+    watch: 'bg-amber-50 border-amber-100 text-amber-700',
+    intervene: 'bg-rose-50 border-rose-100 text-rose-700',
+  };
+
+  return (
+    <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+        <div>
+          <p className="text-xs font-bold text-emerald-500 uppercase tracking-[0.3em]">Agent Orchestration</p>
+          <h2 className="text-2xl font-black text-slate-800 mt-2">多 Agent 协同学习链路</h2>
+          <p className="text-sm text-slate-500 mt-1">编排、陪练、评测和教师洞察共享同一份学习状态。</p>
+        </div>
+        <div className={cn('rounded-2xl border px-4 py-3 text-sm font-bold', riskStyles[orchestration.teacherInsight.riskLevel])}>
+          {orchestration.teacherInsight.summary}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-3 mb-6">
+        {orchestration.roles.map((role) => (
+          <div key={role.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 rounded-xl bg-white border border-slate-100 flex items-center justify-center text-emerald-600">
+                <Zap size={16} />
+              </div>
+              <div className="font-bold text-slate-800 text-sm">{role.name}</div>
+            </div>
+            <div className="text-xs text-slate-500">{role.responsibility}</div>
+            <div className="mt-3 text-[10px] text-slate-400">输入：{role.input}</div>
+            <div className="text-[10px] text-slate-400">输出：{role.output}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-5">
+        <div className="rounded-3xl bg-slate-50 border border-slate-100 p-5">
+          <div className="font-bold text-slate-800 mb-4">协同流转状态</div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            {orchestration.flow.map((step, index) => (
+              <div key={`${step.agent}-${index}`} className="rounded-2xl bg-white border border-slate-100 p-4">
+                <div className={cn(
+                  'w-3 h-3 rounded-full mb-3',
+                  step.status === 'done' ? 'bg-emerald-500' : step.status === 'active' ? 'bg-blue-500' : 'bg-slate-300',
+                )} />
+                <div className="text-xs font-bold text-slate-800">{AGENT_LABELS[step.agent]}</div>
+                <div className="text-[11px] text-slate-500 mt-2">{step.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-3xl bg-slate-50 border border-slate-100 p-5">
+          <div className="font-bold text-slate-800 mb-3">评测反馈 Agent</div>
+          <p className="text-sm text-slate-600">{orchestration.assessmentSummary}</p>
+          <div className="mt-4 font-bold text-slate-800 text-sm">教师洞察触发条件</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {orchestration.teacherInsight.triggers.map((trigger) => (
+              <span key={trigger} className="px-3 py-1 rounded-full bg-white border border-slate-100 text-xs text-slate-600">{trigger}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-5 mt-5">
+        <div className="rounded-3xl border border-slate-100 p-5">
+          <div className="font-bold text-slate-800 mb-4">学习编排 Agent 今日计划</div>
+          {orchestration.plan.length === 0 ? (
+            <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-sm text-emerald-700">当前没有待编排任务，可以进入拓展训练。</div>
+          ) : (
+            <div className="space-y-3">
+              {orchestration.plan.map((item) => (
+                <div key={item.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600">{AGENT_LABELS[item.agent]}</div>
+                      <div className="font-bold text-slate-800 mt-1">{item.title}</div>
+                      <div className="text-xs text-slate-500 mt-1">{item.rationale}</div>
+                      <div className="text-[11px] text-slate-400 mt-2">{item.nextAction}</div>
+                    </div>
+                    <button
+                      onClick={() => onOpenStage(item.stage)}
+                      className="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold shrink-0"
+                    >
+                      执行
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-3xl border border-slate-100 p-5">
+          <div className="font-bold text-slate-800 mb-4">Agent 决策追踪</div>
+          {orchestration.trace.length === 0 ? (
+            <div className="text-sm text-slate-500">完成一次推荐、练习或评测后，这里会记录 agent 之间的流转。</div>
+          ) : (
+            <div className="space-y-3">
+              {orchestration.trace.map((event) => (
+                <div key={event.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold text-blue-600">{AGENT_LABELS[event.agent]}</span>
+                    <span className="text-[10px] text-slate-400">{new Date(event.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <div className="text-sm font-bold text-slate-800 mt-1">{event.title}</div>
+                  <div className="text-xs text-slate-500 mt-1">{event.detail}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Views ---
 
 const Dashboard = ({
   currentUser,
   currentUnit,
   studyState,
+  orchestration,
   onSelectStage,
   onOpenStage,
   onOpenChallenge,
@@ -1200,6 +1557,7 @@ const Dashboard = ({
   currentUser: AppUser;
   currentUnit: UnitBundle | null;
   studyState: StudyState;
+  orchestration: AgentOrchestration;
   onSelectStage: (stage: LessonStageKey) => void;
   onOpenStage: (stage: LessonStageKey) => void;
   onOpenChallenge: () => void;
@@ -1241,6 +1599,8 @@ const Dashboard = ({
         <StatCard label="错题累计" value={String(studyState.mistakes.length)} colorClass="text-rose-500" />
         <StatCard label="连续打卡" value={`${streak}天`} icon={Trophy} colorClass="text-orange-500" />
       </div>
+
+      <AgentOrchestrationPanel orchestration={orchestration} onOpenStage={onOpenStage} />
 
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -1662,11 +2022,13 @@ const playWordAudio = async (text: string, accent: 'US' | 'UK' = 'US'): Promise<
 
 const AITutor = ({
   currentUnit,
+  orchestration,
   onCompleteStage,
   onAddMistake,
   fetchSpeechToken,
 }: {
   currentUnit: UnitBundle | null;
+  orchestration: AgentOrchestration;
   onCompleteStage: (stage: LessonStageKey) => void;
   onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
   fetchSpeechToken: () => Promise<SpeechTokenResponse>;
@@ -1689,6 +2051,7 @@ const AITutor = ({
   const [isListening, setIsListening] = useState(false);
   const [accent, setAccent] = useState<'US' | 'UK'>('US');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const activeSpeakingPlan = orchestration.plan.find((item) => item.stage === 'speaking') || orchestration.plan[0];
 
   // 存储识别候选结果
   const [practiceFeedback, setPracticeFeedback] = useState<{ level: 'good' | 'needs-work'; text: string } | null>(null);
@@ -1818,7 +2181,7 @@ const AITutor = ({
       const lessonPrompt = tutorMode === 'free-talk'
         ? `You are a friendly English speaking partner for a middle or high school student. Keep the conversation natural, encouraging, and short. Ask one follow-up question at a time. Student says: ${userText}`
         : currentUnit
-          ? `You are coaching a middle or high school student on FLTRP unit "${currentUnit.title}". Goal: ${coachConfig.goal}. Ask short follow-up questions and help the student answer more naturally. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}. Student response: ${userText}`
+          ? `You are the Speaking Coach Agent in a multi-agent English learning system. Current orchestration goal: ${activeSpeakingPlan?.rationale || coachConfig.goal}. Unit: "${currentUnit.title}". Goal: ${coachConfig.goal}. Ask short follow-up questions and help the student answer more naturally. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}. Student response: ${userText}`
           : userText;
       const aiResponse = await generateChatResponse(lessonPrompt);
       setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
@@ -1927,6 +2290,14 @@ const AITutor = ({
             </button>
           ))}
         </div>
+
+        {activeSpeakingPlan && (
+          <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+            <div className="text-xs font-bold text-emerald-600 mb-1">学习编排 Agent 已下发目标</div>
+            <div className="text-sm font-bold text-slate-800">{activeSpeakingPlan.title}</div>
+            <div className="text-xs text-slate-600 mt-1">{activeSpeakingPlan.rationale}</div>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-3 mb-5">
           <button
@@ -2442,6 +2813,7 @@ const Login = ({ onLogin }: { onLogin: (user: AppUser) => void }) => {
 // --- Main App ---
 
 export default function App() {
+  const isPresentationCapture = new URLSearchParams(window.location.search).has('capture');
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [activeTab, setActiveTab] = useState<AppTabKey>('dashboard');
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -2535,6 +2907,7 @@ export default function App() {
 
   const availableUnits = buildUnitBundlesFromTextbook(selectedTextbook);
   const currentUnit = availableUnits.find((unit) => unit.id === studyState.currentUnitId) || availableUnits[0] || null;
+  const agentOrchestration = buildAgentOrchestration(currentUnit, studyState);
 
   useEffect(() => {
     if (!currentUser || !selectedTextbookId) {
@@ -2610,6 +2983,16 @@ export default function App() {
           ? record.completedTaskIds
           : [...record.completedTaskIds, taskId],
       })),
+      agentEvents: appendAgentEvent(prev.agentEvents, {
+        agent: stage === 'speaking' ? 'speakingCoach' : 'orchestrator',
+        type: stage === 'speaking' ? 'practice' : 'plan',
+        title: `${getStageLabel(stage)}已完成`,
+        detail: stage === 'speaking'
+          ? '口语陪练 Agent 完成一次输出任务，并把完成信号回流给学习编排 Agent。'
+          : '学习编排 Agent 记录课时完成，下一轮推荐会基于新进度重新排序。',
+        unitId: currentUnit.id,
+        stage,
+      }),
     }));
   };
 
@@ -2657,6 +3040,14 @@ export default function App() {
         },
         ...prev.pronunciationAssessments.filter((item) => item.sentenceId !== record.sentenceId),
       ].slice(0, 30),
+      agentEvents: appendAgentEvent(prev.agentEvents, {
+        agent: 'assessment',
+        type: 'assessment',
+        title: `发音评测 ${record.pronunciationScore} 分`,
+        detail: `评测反馈 Agent 识别弱词：${record.weakWords.slice(0, 3).join('、') || '暂无'}，结果会回流到学习编排与教师洞察。`,
+        unitId: record.unitId,
+        stage: 'speaking',
+      }),
     }));
   };
 
@@ -2671,6 +3062,14 @@ export default function App() {
         },
         ...prev.mistakes.filter((item) => !(item.prompt === record.prompt && item.stage === record.stage && item.reason === record.reason)),
       ].slice(0, 30),
+      agentEvents: appendAgentEvent(prev.agentEvents, {
+        agent: 'assessment',
+        type: 'feedback',
+        title: record.reason ? `识别到${MISTAKE_REASON_LABELS[record.reason]}` : '识别到待复盘问题',
+        detail: record.hint || `${record.prompt} 已进入复习包，并会影响学习编排 Agent 的下一步推荐。`,
+        unitId: record.unitId,
+        stage: record.stage,
+      }),
     }));
   };
 
@@ -2693,6 +3092,14 @@ export default function App() {
           ? record.recommendationIds
           : [...record.recommendationIds, item.id],
       })),
+      agentEvents: appendAgentEvent(prev.agentEvents, {
+        agent: 'orchestrator',
+        type: 'plan',
+        title: `执行推荐：${item.title}`,
+        detail: item.rationale || item.description,
+        unitId: currentUnit?.id,
+        stage: item.stage,
+      }),
     }));
   };
 
@@ -2702,6 +3109,13 @@ export default function App() {
       dailyCheckins: updateTodayRecord(prev, (record) => {
         const status = calculateCheckinStatus(record);
         return status.ready ? { ...record, checkedIn: true } : record;
+      }),
+      agentEvents: appendAgentEvent(prev.agentEvents, {
+        agent: 'teacherInsight',
+        type: 'teacher-insight',
+        title: '今日学习闭环完成',
+        detail: '教师洞察 Agent 收到打卡信号，可将今日推进情况纳入班级趋势和风险判断。',
+        unitId: currentUnit?.id,
       }),
     }));
   };
@@ -2728,6 +3142,14 @@ export default function App() {
         ...record,
         challengeCompleted: true,
       })),
+      agentEvents: appendAgentEvent(prev.agentEvents, {
+        agent: 'assessment',
+        type: 'assessment',
+        title: `单元闯关完成 ${score}/${total}`,
+        detail: '评测反馈 Agent 汇总闯关结果，并把掌握度信号交给教师洞察 Agent。',
+        unitId: currentUnit.id,
+        stage: 'speaking',
+      }),
     }));
     setActiveTab('dashboard');
   };
@@ -2918,13 +3340,13 @@ export default function App() {
             {textbookError && <p className="text-xs font-bold text-red-500 mt-3">{textbookError}</p>}
           </div>
 
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode={isPresentationCapture ? 'sync' : 'wait'}>
             <motion.div
               key={activeTab}
-              initial={{ opacity: 0, y: 10 }}
+              initial={isPresentationCapture ? false : { opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
+              exit={isPresentationCapture ? undefined : { opacity: 0, y: -10 }}
+              transition={{ duration: isPresentationCapture ? 0 : 0.2 }}
               className="h-full"
             >
               {!selectedTextbook && activeTab !== 'manage' ? (
@@ -2948,6 +3370,7 @@ export default function App() {
                   currentUser={currentUser}
                   currentUnit={currentUnit}
                   studyState={studyState}
+                  orchestration={agentOrchestration}
                   onSelectStage={handleSelectStage}
                   onOpenStage={handleOpenStage}
                   onOpenChallenge={handleOpenChallenge}
@@ -3003,6 +3426,7 @@ export default function App() {
               {activeTab === 'tutor' && (
                 <AITutor
                   currentUnit={currentUnit}
+                  orchestration={agentOrchestration}
                   onCompleteStage={handleCompleteStage}
                   onAddMistake={handleAddMistake}
                   fetchSpeechToken={() => apiFetch<SpeechTokenResponse>('/api/speech-token')}
@@ -3054,6 +3478,7 @@ export default function App() {
                   getUnitChallengeStatus={getUnitChallengeStatus}
                   getCheckinStreak={getCheckinStreak}
                   buildSevenDayTrend={buildSevenDayTrend}
+                  buildAgentOrchestration={buildAgentOrchestration}
                 />
               )}
               {activeTab === 'exam' && (

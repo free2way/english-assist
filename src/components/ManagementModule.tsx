@@ -45,6 +45,12 @@ interface ClassSnapshot {
   textbookTitle: string;
   currentUnit: UnitBundle | null;
   challenge: ChallengeStatus;
+  agentInsight: {
+    riskLevel: 'stable' | 'watch' | 'intervene';
+    summary: string;
+    triggers: string[];
+    actions: string[];
+  };
   completedTasks: number;
   mistakes: number;
   streak: number;
@@ -65,6 +71,9 @@ interface ManagementModuleProps {
   getUnitChallengeStatus: (unit: UnitBundle | null, studyState: StudyState) => ChallengeStatus;
   getCheckinStreak: (dailyCheckins: StudyState['dailyCheckins']) => number;
   buildSevenDayTrend: (dailyCheckins: StudyState['dailyCheckins']) => SevenDayTrendPoint[];
+  buildAgentOrchestration: (unit: UnitBundle | null, studyState: StudyState) => {
+    teacherInsight: ClassSnapshot['agentInsight'];
+  };
 }
 
 export function ManagementModule({
@@ -81,6 +90,7 @@ export function ManagementModule({
   getUnitChallengeStatus,
   getCheckinStreak,
   buildSevenDayTrend,
+  buildAgentOrchestration,
 }: ManagementModuleProps) {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [gradeFilter, setGradeFilter] = useState('all');
@@ -125,6 +135,7 @@ export function ManagementModule({
     const state = matchedTextbook ? loadStudyStateForUser(user.username, matchedTextbook.id, units) : createInitialStudyState(units);
     const currentUnit = units.find((unit) => unit.id === state.currentUnitId) || units[0] || null;
     const challenge = getUnitChallengeStatus(currentUnit, state);
+    const agentInsight = buildAgentOrchestration(currentUnit, state).teacherInsight;
 
     return {
       user,
@@ -132,6 +143,7 @@ export function ManagementModule({
       textbookTitle: matchedTextbook?.title || '未导入教材',
       currentUnit,
       challenge,
+      agentInsight,
       completedTasks: state.completedTaskIds.length,
       mistakes: state.mistakes.length,
       streak: getCheckinStreak(state.dailyCheckins),
@@ -163,7 +175,7 @@ export function ManagementModule({
     averageProgress: filteredSnapshots.length > 0
       ? Math.round(filteredSnapshots.reduce((sum, item) => sum + item.challenge.progress, 0) / filteredSnapshots.length)
       : 0,
-    riskStudents: filteredSnapshots.filter((item) => item.mistakes >= 3).length,
+    riskStudents: filteredSnapshots.filter((item) => item.agentInsight.riskLevel !== 'stable').length,
   };
 
   const unitFilterOptions = Array.from(new Set(classSnapshots.map((item) => item.currentUnit?.unit).filter(Boolean))) as string[];
@@ -388,6 +400,51 @@ export function ManagementModule({
           </div>
         </div>
 
+        <div className="rounded-3xl border border-emerald-100 bg-emerald-50/50 p-5 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+            <div>
+              <h4 className="font-bold text-slate-800">教师洞察 Agent</h4>
+              <p className="text-xs text-slate-500 mt-1">消费学生侧编排、评测和复盘信号，生成班级干预建议</p>
+            </div>
+            <span className="px-3 py-1 rounded-full bg-white border border-emerald-100 text-xs font-bold text-emerald-700">
+              多 Agent 结果汇总
+            </span>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+            {filteredSnapshots.slice(0, 3).map((snapshot) => (
+              <div key={`agent-${snapshot.user.id}`} className="rounded-2xl bg-white border border-emerald-100 p-4">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="font-bold text-slate-800 text-sm">{snapshot.user.username}</div>
+                  <span className={cn(
+                    'px-2 py-1 rounded-full text-[10px] font-bold',
+                    snapshot.agentInsight.riskLevel === 'stable'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : snapshot.agentInsight.riskLevel === 'watch'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-rose-100 text-rose-700',
+                  )}>
+                    {snapshot.agentInsight.riskLevel === 'stable' ? '稳定' : snapshot.agentInsight.riskLevel === 'watch' ? '观察' : '干预'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600">{snapshot.agentInsight.summary}</p>
+                <div className="mt-3 text-[10px] font-bold text-slate-400">触发信号</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {snapshot.agentInsight.triggers.slice(0, 2).map((trigger) => (
+                    <span key={trigger} className="px-2 py-1 rounded-full bg-slate-50 text-[10px] text-slate-500">{trigger}</span>
+                  ))}
+                </div>
+                <div className="mt-3 text-[10px] font-bold text-slate-400">建议动作</div>
+                <p className="mt-1 text-xs text-slate-600">{snapshot.agentInsight.actions[0]}</p>
+              </div>
+            ))}
+            {filteredSnapshots.length === 0 && (
+              <div className="rounded-2xl bg-white border border-emerald-100 p-4 text-sm text-slate-500">
+                暂无学生信号可供教师洞察 Agent 汇总。
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="space-y-3">
           {filteredSnapshots.length === 0 ? (
             <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-sm text-slate-500">
@@ -414,7 +471,21 @@ export function ManagementModule({
                     )}>
                       闯关准备度 {snapshot.challenge.progress}%
                     </span>
+                    <span className={cn(
+                      'px-3 py-1 rounded-full',
+                      snapshot.agentInsight.riskLevel === 'stable'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : snapshot.agentInsight.riskLevel === 'watch'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-rose-100 text-rose-700',
+                    )}>
+                      Agent {snapshot.agentInsight.riskLevel === 'stable' ? '稳定' : snapshot.agentInsight.riskLevel === 'watch' ? '观察' : '干预'}
+                    </span>
                   </div>
+                </div>
+                <div className="mt-3 rounded-2xl bg-white border border-slate-100 p-3">
+                  <div className="text-[10px] font-bold text-slate-400 mb-1">教师洞察 Agent 建议</div>
+                  <div className="text-xs text-slate-600">{snapshot.agentInsight.actions[0]}</div>
                 </div>
               </div>
             ))
