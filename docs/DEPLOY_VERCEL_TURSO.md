@@ -150,6 +150,14 @@ https://your-domain.vercel.app/api/health
 - 教材导入仍以项目内样板和后台导入为主，不是完整 CMS
 - Turso 解决了 Vercel 无本地磁盘数据库的问题，但不等于自动具备复杂权限系统
 
+### 函数区域（听口延迟相关）
+
+`vercel.json` 里的 `"regions": ["hkg1"]` 把 Serverless 函数放在香港，贴近 Azure Speech 的 `eastasia` 区域：
+
+- Hobby 计划只能选一个区域；Pro 可以配 3 个（例如 `["hkg1", "iad1"]`），Vercel 会按就近路由。
+- 代价：函数到 Turso 主库的往返会变长（主库在哪要看创建时的区域），以及调用美国侧 AI 服务时多一跳。当前取 token 已做客户端 9 分钟缓存，因此这个接口的调用频率很低，整体收益大于代价。
+- 如果部署后 AI 对话明显变慢，先量一下 `/api/ai/chat` 的耗时再决定是否回退。
+
 如果后续用户量继续增长，下一步建议考虑：
 
 - 增加数据库 migration 管理

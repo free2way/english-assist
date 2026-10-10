@@ -44,7 +44,14 @@ import { DictationModule } from './components/DictationModule';
 import { ManagementModule } from './components/ManagementModule';
 import { StatCard } from './components/StatCard';
 import { Statistics } from './components/Statistics';
-import { createPronunciationAssessmentSession, recognizeSpeechFromMicrophone, speakTextWithAzure } from './lib/azureSpeech';
+import {
+  openMicrophoneStream,
+  preloadSpeechEngine,
+  recognizeSpeechFromMicrophone,
+  speakTextWithAzure,
+  startPronunciationAssessmentSession,
+  stopMediaStream,
+} from './lib/azureSpeech';
 import { cn } from './lib/utils';
 import { TextbookModule } from './components/textbook/TextbookModule';
 import {
@@ -2043,8 +2050,11 @@ const AITutor = ({
   const [speakingAssessment, setSpeakingAssessment] = useState<AzurePronunciationResult | null>(null);
   const [speakingAssessmentText, setSpeakingAssessmentText] = useState('');
   const [isAssessingSpeaking, setIsAssessingSpeaking] = useState(false);
+  const [isPreparingSpeaking, setIsPreparingSpeaking] = useState(false);
   const [speakingAssessmentError, setSpeakingAssessmentError] = useState('');
-  const speakingSessionRef = useRef<Awaited<ReturnType<typeof createPronunciationAssessmentSession>> | null>(null);
+  const speakingSessionRef = useRef<Awaited<ReturnType<typeof startPronunciationAssessmentSession>> | null>(null);
+  const speakingStreamRef = useRef<MediaStream | null>(null);
+  const speakingRunRef = useRef(0);
 
   useEffect(() => {
     setMessages([{ role: 'ai', text: starterQuestion }]);
@@ -2054,18 +2064,26 @@ const AITutor = ({
     setSpeakingAssessmentError('');
     speakingSessionRef.current?.cancel();
     speakingSessionRef.current = null;
+    speakingRunRef.current += 1;
+    stopMediaStream(speakingStreamRef.current);
+    speakingStreamRef.current = null;
     setIsAssessingSpeaking(false);
+    setIsPreparingSpeaking(false);
   }, [starterQuestion]);
+
+  // Warm up the SDK chunk and the Azure token while the student is chatting.
+  useEffect(() => {
+    preloadSpeechEngine(fetchSpeechToken);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleListening = async () => {
     if (isListening) return;
 
     setIsListening(true);
     try {
-      const { token, region } = await fetchSpeechToken();
       const transcript = await recognizeSpeechFromMicrophone({
-        token,
-        region,
+        getToken: fetchSpeechToken,
         language: accent === 'US' ? 'en-US' : 'en-GB',
       });
       setInputValue(transcript.replace(/[.。]\s*$/, ''));
@@ -2091,10 +2109,14 @@ const AITutor = ({
       return;
     }
 
+    if (isPreparingSpeaking) return;
+
     if (isAssessingSpeaking && speakingSessionRef.current) {
       try {
         const { assessment, weakWords } = await speakingSessionRef.current.stop();
         speakingSessionRef.current = null;
+        stopMediaStream(speakingStreamRef.current);
+        speakingStreamRef.current = null;
         setSpeakingAssessment(assessment);
         setSpeakingAssessmentText(referenceText);
 
@@ -2113,27 +2135,51 @@ const AITutor = ({
       } catch (error: any) {
         setSpeakingAssessmentError(error?.message || 'Azure 口语评测失败，请稍后再试。');
       } finally {
+        speakingSessionRef.current = null;
+        stopMediaStream(speakingStreamRef.current);
+        speakingStreamRef.current = null;
         setIsAssessingSpeaking(false);
       }
       return;
     }
 
-    setIsAssessingSpeaking(true);
+    setIsPreparingSpeaking(true);
     setSpeakingAssessment(null);
     setSpeakingAssessmentError('');
+    const runId = speakingRunRef.current + 1;
+    speakingRunRef.current = runId;
 
     try {
-      const { token, region } = await fetchSpeechToken();
-      speakingSessionRef.current = await createPronunciationAssessmentSession({
-        token,
-        region,
+      const stream = await openMicrophoneStream();
+      if (speakingRunRef.current !== runId) {
+        stopMediaStream(stream);
+        return;
+      }
+      speakingStreamRef.current = stream;
+      const session = await startPronunciationAssessmentSession({
+        getToken: fetchSpeechToken,
         referenceText,
         language: accent === 'US' ? 'en-US' : 'en-GB',
+        mediaStream: stream,
       });
+      if (speakingRunRef.current !== runId) {
+        session.cancel();
+        stopMediaStream(stream);
+        return;
+      }
+      speakingSessionRef.current = session;
       setSpeakingAssessmentText(referenceText);
+      setIsAssessingSpeaking(true);
     } catch (error: any) {
+      if (speakingRunRef.current !== runId) return;
       setSpeakingAssessmentError(error?.message || 'Azure 口语评测失败，请稍后再试。');
       setIsAssessingSpeaking(false);
+      speakingSessionRef.current?.cancel();
+      speakingSessionRef.current = null;
+      stopMediaStream(speakingStreamRef.current);
+      speakingStreamRef.current = null;
+    } finally {
+      setIsPreparingSpeaking(false);
     }
   };
 
@@ -2186,10 +2232,8 @@ const AITutor = ({
     setIsSpeaking(index);
 
     try {
-      const { token, region } = await fetchSpeechToken();
       await speakTextWithAzure({
-        token,
-        region,
+        getToken: fetchSpeechToken,
         text,
         voiceName: accent === 'US' ? 'en-US-AvaMultilingualNeural' : 'en-GB-SoniaNeural',
       });
@@ -2287,12 +2331,21 @@ const AITutor = ({
         <div className="flex flex-wrap gap-3 mb-5">
           <button
             onClick={handleAssessSpeaking}
+            disabled={isPreparingSpeaking}
             className={cn(
               'px-4 py-2 rounded-2xl text-sm font-bold',
-              isAssessingSpeaking ? 'bg-red-500 text-white' : 'bg-violet-500 text-white',
+              isPreparingSpeaking
+                ? 'bg-slate-200 text-slate-500 cursor-wait'
+                : isAssessingSpeaking
+                  ? 'bg-red-500 text-white'
+                  : 'bg-violet-500 text-white',
             )}
           >
-            {isAssessingSpeaking ? '停止并提交 Azure 口语评测' : '开始 Azure 口语评测'}
+            {isPreparingSpeaking
+              ? '正在准备麦克风...'
+              : isAssessingSpeaking
+                ? '停止并提交 Azure 口语评测'
+                : '开始 Azure 口语评测'}
           </button>
           <div className="text-xs text-slate-400 self-center">
             {tutorMode === 'free-talk' ? '会按当前输入或最近一句自由表达做发音评测。' : '会按当前输入或最近一句教材表达做发音评测。'}

@@ -26,6 +26,46 @@ app.use(express.json());
 const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY?.trim();
 const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION?.trim();
 
+// Azure Speech STS tokens are valid for 10 minutes. The browser asks for a token
+// before every TTS playback and every pronunciation assessment, so caching it
+// here keeps a full STS round trip out of the critical path of each recording.
+const SPEECH_TOKEN_TTL_MS = 9 * 60 * 1000;
+const SPEECH_TOKEN_REFRESH_MARGIN_MS = 60 * 1000;
+let speechTokenCache: { token: string; expiresAt: number } | null = null;
+let speechTokenInflight: Promise<string> | null = null;
+
+const requestSpeechToken = async (): Promise<string> => {
+  const cached = speechTokenCache;
+  if (cached && cached.expiresAt - Date.now() > SPEECH_TOKEN_REFRESH_MARGIN_MS) {
+    return cached.token;
+  }
+
+  if (!speechTokenInflight) {
+    speechTokenInflight = (async () => {
+      const response = await fetch(`https://${AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/sts/v1.0/issueToken`, {
+        method: 'POST',
+        headers: {
+          'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY as string,
+          'Content-Length': '0',
+        },
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(`Azure Speech token 获取失败: ${message || response.statusText}`);
+      }
+
+      const token = await response.text();
+      speechTokenCache = { token, expiresAt: Date.now() + SPEECH_TOKEN_TTL_MS };
+      return token;
+    })().finally(() => {
+      speechTokenInflight = null;
+    });
+  }
+
+  return speechTokenInflight;
+};
+
 const getBearerToken = (header?: string) => {
   if (!header?.startsWith('Bearer ')) return null;
   return header.slice('Bearer '.length).trim();
@@ -74,25 +114,14 @@ app.get('/api/speech-token', requireAuth, async (_req, res) => {
   }
 
   try {
-    const response = await fetch(`https://${AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/sts/v1.0/issueToken`, {
-      method: 'POST',
-      headers: {
-        'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
-        'Content-Length': '0',
-      },
-    });
-
-    if (!response.ok) {
-      const message = await response.text();
-      res.status(502).json({ error: `Azure Speech token 获取失败: ${message || response.statusText}` });
-      return;
-    }
-
-    const token = await response.text();
+    const token = await requestSpeechToken();
+    const expiresInSeconds = speechTokenCache
+      ? Math.max(60, Math.floor((speechTokenCache.expiresAt - Date.now()) / 1000))
+      : 600;
     res.json({
       token,
       region: AZURE_SPEECH_REGION,
-      expiresInSeconds: 600,
+      expiresInSeconds,
     });
   } catch (error) {
     res.status(502).json({

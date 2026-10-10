@@ -11,7 +11,9 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "db:check": "tsx scripts/check-db.ts",
-    "db:import-samples": "tsx scripts/import-textbook-samples.ts"
+    "db:import-samples": "tsx scripts/import-textbook-samples.ts",
+    "test:speech": "tsx scripts/test-speech-aggregation.ts",
+    "probe:speech": "node scripts/probe-azure-pronunciation.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
