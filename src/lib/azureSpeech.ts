@@ -106,6 +106,79 @@ export const ensureSpeechToken = async (provider: SpeechTokenProvider): Promise<
 
 const MICROPHONE_PERMISSION_TIMEOUT_MS = 30000;
 
+export interface MicrophoneStats {
+  /** Loudest RMS seen while recording (0..1). Normal speech is roughly 0.02-0.15. */
+  peakLevel: number;
+  averageLevel: number;
+  /** Share of sampled frames that contain speech-level energy. */
+  speechRatio: number;
+}
+
+export interface MicrophoneMonitor {
+  stop: () => MicrophoneStats;
+}
+
+/**
+ * Cheap input-quality meter on the same stream the recognizer consumes. The
+ * field reports of "识别不准" are usually quiet / distant microphones rather
+ * than a recognizer problem, and this makes that visible to the student.
+ */
+export const monitorMicrophone = (
+  stream: MediaStream,
+  onLevel?: (level: number) => void,
+): MicrophoneMonitor => {
+  const AudioContextCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) {
+    return { stop: () => ({ peakLevel: 0, averageLevel: 0, speechRatio: 1 }) };
+  }
+
+  const context = new AudioContextCtor();
+  const source = context.createMediaStreamSource(stream);
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 1024;
+  source.connect(analyser);
+  void context.resume().catch(() => undefined);
+
+  const buffer = new Float32Array(analyser.fftSize);
+  let peakLevel = 0;
+  let levelSum = 0;
+  let frames = 0;
+  let speechFrames = 0;
+
+  const timer = setInterval(() => {
+    analyser.getFloatTimeDomainData(buffer);
+    let energy = 0;
+    for (let i = 0; i < buffer.length; i += 1) {
+      energy += buffer[i] * buffer[i];
+    }
+    const rms = Math.sqrt(energy / buffer.length);
+    peakLevel = Math.max(peakLevel, rms);
+    levelSum += rms;
+    frames += 1;
+    if (rms > 0.01) speechFrames += 1;
+    onLevel?.(Math.min(1, rms * 12));
+  }, 80);
+
+  return {
+    stop: () => {
+      clearInterval(timer);
+      try {
+        source.disconnect();
+        analyser.disconnect();
+        void context.close();
+      } catch {
+        // already torn down
+      }
+      onLevel?.(0);
+      return {
+        peakLevel,
+        averageLevel: frames > 0 ? levelSum / frames : 0,
+        speechRatio: frames > 0 ? speechFrames / frames : 1,
+      };
+    },
+  };
+};
+
 export const openMicrophoneStream = async (): Promise<MediaStream> => {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('当前浏览器不支持麦克风采集，请使用最新版 Chrome / Edge / Safari。');
@@ -153,6 +226,20 @@ export const openMicrophoneStream = async (): Promise<MediaStream> => {
 
 export const stopMediaStream = (stream: MediaStream | null | undefined) => {
   stream?.getTracks().forEach((track) => track.stop());
+};
+
+/** Turns input-level stats into an actionable hint, or '' when the take is fine. */
+export const buildRecordingQualityWarning = (stats: MicrophoneStats): string => {
+  if (stats.peakLevel < 0.015) {
+    return '几乎没有采集到声音：请确认浏览器选中的麦克风正确、靠近麦克风 20–30cm 后重录。';
+  }
+  if (stats.speechRatio < 0.2) {
+    return '录音里人声很少：建议在安静环境朗读，或换用带麦克风的耳麦后重录。';
+  }
+  if (stats.peakLevel < 0.04) {
+    return '录音音量偏小：建议靠近麦克风或把声音放大一点后重录。';
+  }
+  return '';
 };
 
 // -------------------------------------------------------------- result parsing

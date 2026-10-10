@@ -1,11 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BookOpen, GraduationCap, MessageSquare, Mic2, PencilLine } from 'lucide-react';
 import {
+  buildRecordingQualityWarning,
+  monitorMicrophone,
   openMicrophoneStream,
   preloadSpeechEngine,
   startPronunciationAssessmentSession,
   stopMediaStream,
 } from '../../lib/azureSpeech';
+import type { MicrophoneMonitor } from '../../lib/azureSpeech';
 import { TextbookGrammarPage } from './TextbookGrammarPage';
 import { TextbookOverviewPage } from './TextbookOverviewPage';
 import { TextbookPreviewPage } from './TextbookPreviewPage';
@@ -86,6 +89,8 @@ export function TextbookModule({
   const [activePage, setActivePage] = useState<TextbookPageKey>('overview');
   const [recordingPhase, setRecordingPhase] = useState<'idle' | 'preparing' | 'listening' | 'scoring'>('idle');
   const [interimSentenceText, setInterimSentenceText] = useState('');
+  const [recordingLevel, setRecordingLevel] = useState(0);
+  const [recordingQualityWarning, setRecordingQualityWarning] = useState('');
   const [recordedSentenceUrl, setRecordedSentenceUrl] = useState('');
   const [recognizedSentenceText, setRecognizedSentenceText] = useState('');
   const [pronunciationScore, setPronunciationScore] = useState<number | null>(null);
@@ -97,6 +102,7 @@ export function TextbookModule({
   const [pendingSentenceAssessmentIndex, setPendingSentenceAssessmentIndex] = useState<number | null>(null);
   const pronunciationSessionRef = useRef<Awaited<ReturnType<typeof startPronunciationAssessmentSession>> | null>(null);
   const recordingRunRef = useRef(0);
+  const microphoneMonitorRef = useRef<MicrophoneMonitor | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -195,6 +201,9 @@ export function TextbookModule({
   }, []);
 
   const releaseRecordingResources = () => {
+    microphoneMonitorRef.current?.stop();
+    microphoneMonitorRef.current = null;
+    setRecordingLevel(0);
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
@@ -214,6 +223,8 @@ export function TextbookModule({
     setRecognizedSentenceText('');
     setPronunciationScore(null);
     setInterimSentenceText('');
+    setRecordingQualityWarning('');
+    setRecordingLevel(0);
     if (recordedSentenceUrl) {
       URL.revokeObjectURL(recordedSentenceUrl);
       setRecordedSentenceUrl('');
@@ -261,6 +272,7 @@ export function TextbookModule({
       pronunciationSessionRef.current = session;
 
       mediaRecorder.start();
+      microphoneMonitorRef.current = monitorMicrophone(stream, (level) => setRecordingLevel(level));
       setRecordingPhase('listening');
     } catch (error) {
       if (recordingRunRef.current !== runId) return;
@@ -282,6 +294,11 @@ export function TextbookModule({
     }
 
     setRecordingPhase('scoring');
+    // Collect input-quality stats before tearing the capture down: quiet /
+    // distant microphones are the usual cause of "分数很低" in the field.
+    const microphoneStats = microphoneMonitorRef.current?.stop();
+    microphoneMonitorRef.current = null;
+    setRecordingQualityWarning(microphoneStats ? buildRecordingQualityWarning(microphoneStats) : '');
     // Stop the recorder immediately so the playback ends where the student stopped.
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -590,6 +607,8 @@ export function TextbookModule({
           readingIndex={readingIndex}
           recordingPhase={recordingPhase}
           interimSentenceText={interimSentenceText}
+          recordingLevel={recordingLevel}
+          recordingQualityWarning={recordingQualityWarning}
           recordedSentenceUrl={recordedSentenceUrl}
           recognizedSentenceText={recognizedSentenceText}
           pronunciationScore={pronunciationScore}

@@ -10,6 +10,8 @@ interface Props {
   readingIndex: number;
   recordingPhase: 'idle' | 'preparing' | 'listening' | 'scoring';
   interimSentenceText: string;
+  recordingLevel: number;
+  recordingQualityWarning: string;
   recordedSentenceUrl: string;
   recognizedSentenceText: string;
   pronunciationScore: number | null;
@@ -31,6 +33,8 @@ export function TextbookReadingPracticePage({
   readingIndex,
   recordingPhase,
   interimSentenceText,
+  recordingLevel,
+  recordingQualityWarning,
   recordedSentenceUrl,
   recognizedSentenceText,
   pronunciationScore,
@@ -119,10 +123,31 @@ export function TextbookReadingPracticePage({
 
               {isRecording && (
                 <div className="mb-4 rounded-2xl bg-white border border-red-100 p-4">
-                  <div className="text-xs font-bold text-slate-400 mb-1">实时识别</div>
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="text-xs font-bold text-slate-400">实时识别</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-400">麦克风</span>
+                      <div className="h-2 w-24 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className={cn(
+                            'h-full rounded-full transition-[width] duration-100',
+                            recordingLevel > 0.75
+                              ? 'bg-rose-400'
+                              : recordingLevel > 0.12
+                                ? 'bg-emerald-400'
+                                : 'bg-slate-300',
+                          )}
+                          style={{ width: `${Math.round(recordingLevel * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
                   <div className="text-sm text-slate-700 min-h-[20px]">
                     {interimSentenceText || '等待开始朗读…'}
                   </div>
+                  {recordingLevel > 0 && recordingLevel <= 0.08 && (
+                    <div className="text-xs text-amber-600 mt-2">声音有点小，再靠近麦克风一点</div>
+                  )}
                 </div>
               )}
 
@@ -210,6 +235,12 @@ export function TextbookReadingPracticePage({
                 )}
 
                 {recordingError && <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">{recordingError}</div>}
+
+                {recordingQualityWarning && (
+                  <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-700">
+                    <span className="font-bold">录音质量提示：</span>{recordingQualityWarning}
+                  </div>
+                )}
               </div>
             )}
 

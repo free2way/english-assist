@@ -64,8 +64,8 @@ if (!latestResult) await wait(800);  // 盲等
 | --- | --- |
 | `src/lib/azureSpeech.ts` | 重写：token 缓存、预加载、共享麦克风流、多段结果聚合、就绪/中间结果回调、智能停止、错误映射 |
 | `server/app.ts`、`api/_lib/app.ts` | `/api/speech-token` 增加 STS token 内存缓存（9 分钟，带刷新余量，并记录真实 `expiresInSeconds`） |
-| `src/components/textbook/TextbookModule.tsx` | 录音流程改为 prepare → listening → scoring 三态；单条麦克风流；实时识别回显；并发保护（切句/卸载时取消在途会话） |
-| `src/components/textbook/TextbookReadingPracticePage.tsx` | 状态文案、实时识别卡片、逐词反馈区分「漏读 / 多读 / 低分」 |
+| `src/components/textbook/TextbookModule.tsx` | 录音流程改为 prepare → listening → scoring 三态；单条麦克风流；实时识别回显；录音音量/人声质量检测；并发保护（切句/卸载时取消在途会话） |
+| `src/components/textbook/TextbookReadingPracticePage.tsx` | 状态文案、实时识别卡片 + 麦克风电平条、录音质量提示、逐词反馈区分「漏读 / 多读 / 低分」 |
 | `src/App.tsx` | AI 外教口语评测与语音输入接入新接口，增加"正在准备麦克风"状态 |
 | `vite.config.ts` | 允许 `API_PROXY_TARGET` 覆盖后端地址（本机 3001 被占用时用） |
 | `scripts/test-speech-aggregation.ts`、`scripts/probe-azure-pronunciation.mjs` | 新增合并打分单测与真机探针 |
@@ -83,6 +83,7 @@ if (!latestResult) await wait(800);  // 盲等
 4. **token 缓存**：服务端 9 分钟内存缓存 + 单飞请求；前端按 `expiresInSeconds` 缓存并提前 60s 刷新；页面打开即预加载 SDK 与 token。
 5. **共享麦克风流**：`AudioConfig.fromStreamInput(mediaStream)` 与 MediaRecorder 用同一条 `getUserMedia`（含回声消除/降噪/自动增益），回放的就是被评测的音频。
 6. **错误映射**：401/403 → 授权失败提示；1006/网络 → 连接失败提示；无语音 → 专门的提示；麦克风授权 30s 未响应 → 超时提示。
+7. **录音质量门槛**：录音时用 `AudioContext` + `AnalyserNode` 采样输入电平，界面上给实时电平条；停止后按峰值/人声占比判定"声音太小 / 人声太少 / 音量偏小"，直接提示重录 —— 现场"识别不准"多半是采集问题，而不是识别引擎问题。
 
 ## 三、验证（2026-10-10 已用真实账号跑过，区域 eastasia）
 
@@ -117,10 +118,18 @@ npm run probe:speech  # 真机探针：AZURE_SPEECH_KEY/REGION，或 AZURE_SPEEC
 浏览器侧手测清单：
 
 1. 朗读评测页 → 点"开始录音朗读"，应先出现"正在连接评测服务"，就绪后才变成"正在录音"；
-2. 朗读中应看到实时识别文本；
+2. 朗读中应看到实时识别文本与麦克风电平条；
 3. 读到一半故意停顿 1.5~2s 再继续，分数不应崩（旧版本这里只上报尾段）；
 4. 点"结束录音并提交评分"后应在 1s 内出分（旧版本固定多等 800ms）；
 5. 拒绝麦克风权限 / 断网时应有明确提示并回到可重试状态。
+
+**全链路端到端验证（本地）**：把一段真实 TTS 语音通过 `MediaStreamDestination` 注入成"假麦克风"，在浏览器里跑完整流程，实测：
+
+- 点开始 → "正在录音"：**0.91s**（首次冷启动 4.0s，主要是 SDK chunk 下载 + 首连）；
+- `/api/speech-token`：服务端缓存命中后 **7ms**；
+- 实时识别文本与电平条正常刷新；
+- 停止 → 出分 → 逐词反馈（含"漏读：What / 多读：you、what"）与学习建议全部渲染；
+- 故意用一句不匹配的语音，系统正确报出完整度 14、漏读 1 处、多读 4 个词 —— 说明漏读/多读检测在真实链路上有效。
 
 调试开关：`localStorage.speechDebug = '1'` 后控制台会输出 `[speech]` 前缀的分段时间线。
 
