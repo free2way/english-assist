@@ -3240,7 +3240,7 @@ export default function App() {
           localStorage.setItem(getStudyStorageKey(currentUser.username, selectedTextbookId), JSON.stringify(restored));
           localStorage.setItem(getStudyUpdatedAtKey(currentUser.username, selectedTextbookId), new Date(serverTime || Date.now()).toISOString());
           console.info('[study] 已从服务端恢复学习进度');
-        } else if (!isStudyStateEmpty(localState) && localTime > 0) {
+        } else if (!isStudyStateEmpty(localState) && (!data.state || localTime > serverTime)) {
           await pushStudyStateRef.current?.();
         }
         if (!cancelled) setRemoteSynced(true);
