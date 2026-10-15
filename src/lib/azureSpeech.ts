@@ -749,25 +749,54 @@ export async function startPronunciationAssessmentSession(
 
 // ------------------------------------------------------------------------ TTS
 
+const escapeXml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
 export async function speakTextWithAzure({
   getToken,
   text,
   voiceName,
+  rate = 1,
+  language = 'en-US',
 }: {
   getToken: SpeechTokenProvider;
   text: string;
   voiceName: string;
+  /** 1 = normal speed, 0.75 = slow replay. */
+  rate?: number;
+  language?: string;
 }): Promise<void> {
   const SpeechSDK = await getSpeechSdk();
   const { token, region } = await ensureSpeechToken(getToken);
   const speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
   speechConfig.speechSynthesisVoiceName = voiceName;
   const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig);
+  const clampedRate = Math.min(1.5, Math.max(0.5, rate));
 
   try {
+    if (Math.abs(clampedRate - 1) < 0.01) {
+      await new Promise<void>((resolve, reject) => {
+        synthesizer.speakTextAsync(
+          text,
+          () => resolve(),
+          (error: any) => reject(error),
+        );
+      });
+      return;
+    }
+
+    // Playback speed has to travel as SSML prosody; the plain-text API has no
+    // speed knob, which is why the slow-replay button needs its own path.
+    const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${language}">`
+      + `<voice name="${voiceName}"><prosody rate="${clampedRate}">${escapeXml(text)}</prosody></voice></speak>`;
     await new Promise<void>((resolve, reject) => {
-      synthesizer.speakTextAsync(
-        text,
+      synthesizer.speakSsmlAsync(
+        ssml,
         () => resolve(),
         (error: any) => reject(error),
       );

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { AlertCircle, BookOpen, Check, ChevronRight, PencilLine, RotateCw, Volume2, X } from 'lucide-react';
+import { AlertCircle, BookOpen, Check, ChevronRight, PencilLine, RefreshCw, RotateCw, Volume2, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { LessonStageKey, MistakeReason, MistakeRecord, UnitBundle } from './textbook/types';
 
@@ -8,9 +8,12 @@ interface Props {
   currentUnit: UnitBundle | null;
   onCompleteStage: (stage: LessonStageKey) => void;
   onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
-  playWordAudio: (text: string, accent?: 'US' | 'UK') => Promise<unknown>;
-  generateTTS: (text: string, voice?: string) => Promise<boolean>;
-  playBrowserTTS: (text: string, accent: 'US' | 'UK', rate?: number) => Promise<boolean>;
+  /** Azure-first TTS; `rate` < 1 gives the slow replay used for dictation. */
+  speak: (text: string, accent?: 'US' | 'UK', rate?: number) => Promise<boolean>;
+  onRecordAttempt: (attempt: { mode: 'word' | 'sentence'; correct: number; total: number }) => void;
+  retryTarget: MistakeRecord | null;
+  onRetryTargetHandled: () => void;
+  onResolveMistake: (mistake: MistakeRecord) => void;
   classifyDictationIssue: (input: string, target: string) => { reason: MistakeReason; hint: string };
   mistakeReasonLabels: Record<MistakeReason, string>;
 }
@@ -19,9 +22,11 @@ export function DictationModule({
   currentUnit,
   onCompleteStage,
   onAddMistake,
-  playWordAudio,
-  generateTTS,
-  playBrowserTTS,
+  speak,
+  onRecordAttempt,
+  retryTarget,
+  onRetryTargetHandled,
+  onResolveMistake,
   classifyDictationIssue,
   mistakeReasonLabels,
 }: Props) {
@@ -30,27 +35,49 @@ export function DictationModule({
   const [userInput, setUserInput] = useState('');
   const [showResult, setShowResult] = useState<'none' | 'correct' | 'wrong'>('none');
   const [score, setScore] = useState({ correct: 0, total: 0 });
+  const [answeredIds, setAnsweredIds] = useState<string[]>([]);
+  const [wrongIds, setWrongIds] = useState<string[]>([]);
+  const [finished, setFinished] = useState(false);
   const [feedbackHint, setFeedbackHint] = useState('');
   const [feedbackReason, setFeedbackReason] = useState<MistakeReason | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [onlyWrongMode, setOnlyWrongMode] = useState(false);
 
-  const currentData = currentUnit ? (mode === 'word' ? currentUnit.vocab : currentUnit.sentences) : [];
+  const fullData = currentUnit ? (mode === 'word' ? currentUnit.vocab : currentUnit.sentences) : [];
+  const currentData = useMemo(() => {
+    if (!onlyWrongMode) return fullData;
+    return fullData.filter((item) => wrongIds.includes(item.id));
+  }, [fullData, onlyWrongMode, wrongIds]);
   const currentItem = currentData[currentIndex];
+  const itemKey = (item: { id: string }) => item.id;
 
-  const handleSpeak = async () => {
-    if (!currentItem || isSpeaking) return;
+  const play = async (text: string, rate: number) => {
+    if (isSpeaking) return;
     setIsSpeaking(true);
-    const text = mode === 'word' ? (currentItem as any).word : (currentItem as any).text;
-
     try {
-      let success = await playWordAudio(text, 'US').then(() => true).catch(() => false);
-      if (!success) success = await generateTTS(text, 'US');
-      if (!success) await playBrowserTTS(text, 'US', 0.9);
-    } catch {
-      await playBrowserTTS(text, 'US', 0.9);
+      await speak(text, 'US', rate);
     } finally {
       setIsSpeaking(false);
     }
+  };
+
+  const handleSpeak = async (rate = 1) => {
+    if (!currentItem) return;
+    const text = mode === 'word' ? (currentItem as any).word : (currentItem as any).text;
+    await play(text, rate);
+  };
+
+  const resetRound = () => {
+    setCurrentIndex(0);
+    setUserInput('');
+    setShowResult('none');
+    setFeedbackHint('');
+    setFeedbackReason(null);
+    setScore({ correct: 0, total: 0 });
+    setAnsweredIds([]);
+    setWrongIds([]);
+    setFinished(false);
+    setOnlyWrongMode(false);
   };
 
   const checkAnswer = () => {
@@ -58,14 +85,20 @@ export function DictationModule({
     const target = mode === 'word' ? (currentItem as any).word : (currentItem as any).text;
     const normalizedInput = userInput.trim().toLowerCase().replace(/[.,!?;:]/g, '');
     const normalizedTarget = target.trim().toLowerCase().replace(/[.,!?;:]/g, '');
+    const key = itemKey(currentItem);
+
+    setAnsweredIds((prev) => (prev.includes(key) ? prev : [...prev, key]));
 
     if (normalizedInput === normalizedTarget) {
       setShowResult('correct');
       setFeedbackHint('这题正确，可以继续下一题。');
       setFeedbackReason(null);
       setScore((prev) => ({ ...prev, correct: prev.correct + 1, total: prev.total + 1 }));
-      if (currentIndex === currentData.length - 1) {
-        onCompleteStage('dictation');
+
+      // A targeted re-practice of a mistake clears it from the mistake book.
+      if (retryTarget && retryTarget.expected.trim().toLowerCase() === target.trim().toLowerCase()) {
+        onResolveMistake(retryTarget);
+        onRetryTargetHandled();
       }
       return;
     }
@@ -75,6 +108,7 @@ export function DictationModule({
     setFeedbackHint(issue.hint);
     setFeedbackReason(issue.reason);
     setScore((prev) => ({ ...prev, total: prev.total + 1 }));
+    setWrongIds((prev) => (prev.includes(key) ? prev : [...prev, key]));
     if (currentUnit) {
       onAddMistake({
         unitId: currentUnit.id,
@@ -90,26 +124,60 @@ export function DictationModule({
     }
   };
 
+  const finishRound = () => {
+    if (!currentUnit) return;
+    setFinished(true);
+    // Completion is "every item answered once" - the old rule only completed
+    // the stage when the LAST item happened to be correct.
+    onCompleteStage('dictation');
+    onRecordAttempt({ mode, correct: score.correct, total: score.total });
+  };
+
   const nextItem = () => {
     setUserInput('');
     setShowResult('none');
     setFeedbackHint('');
     setFeedbackReason(null);
-    setCurrentIndex((prev) => (prev + 1) % currentData.length);
+    if (currentIndex >= currentData.length - 1) {
+      finishRound();
+      return;
+    }
+    setCurrentIndex((prev) => prev + 1);
   };
 
-  const reset = () => {
+  const practiceWrongOnly = () => {
+    setFinished(false);
+    setOnlyWrongMode(true);
     setCurrentIndex(0);
     setUserInput('');
     setShowResult('none');
     setFeedbackHint('');
     setFeedbackReason(null);
     setScore({ correct: 0, total: 0 });
+    setAnsweredIds([]);
   };
 
+  const wrongItems = fullData.filter((item) => wrongIds.includes(itemKey(item)));
+
   useEffect(() => {
-    reset();
+    resetRound();
   }, [currentUnit?.id, mode]);
+
+  // Jump straight to the item the student was told to re-practice.
+  useEffect(() => {
+    if (!retryTarget || !currentUnit) return;
+    const wantsSentence = retryTarget.prompt.startsWith('句子听写');
+    const nextMode: 'word' | 'sentence' = wantsSentence ? 'sentence' : 'word';
+    const list = nextMode === 'word' ? currentUnit.vocab : currentUnit.sentences;
+    const index = list.findIndex((item) => (
+      (nextMode === 'word' ? (item as any).word : (item as any).text).trim().toLowerCase()
+      === retryTarget.expected.trim().toLowerCase()
+    ));
+    if (index < 0) return;
+    setMode(nextMode);
+    resetRound();
+    setCurrentIndex(index);
+  }, [retryTarget, currentUnit]);
 
   return (
     <div className="h-full flex flex-col pb-20">
@@ -124,12 +192,18 @@ export function DictationModule({
         </div>
       </div>
 
+      {retryTarget && (
+        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-700">
+          正在复练错题：{retryTarget.prompt}（答对即从错题本销账）
+        </div>
+      )}
+
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-6">
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => {
               setMode('word');
-              reset();
+              resetRound();
             }}
             className={cn(
               'flex-1 py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2',
@@ -142,7 +216,7 @@ export function DictationModule({
           <button
             onClick={() => {
               setMode('sentence');
-              reset();
+              resetRound();
             }}
             className={cn(
               'flex-1 py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2',
@@ -154,11 +228,11 @@ export function DictationModule({
           </button>
         </div>
 
-        {currentData.length > 0 ? (
+        {currentData.length > 0 && !finished ? (
           <div className="space-y-8 py-4">
             <div className="flex flex-col items-center gap-6">
               <button
-                onClick={handleSpeak}
+                onClick={() => handleSpeak(1)}
                 disabled={isSpeaking}
                 className={cn(
                   'w-24 h-24 rounded-full flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-inner',
@@ -166,6 +240,13 @@ export function DictationModule({
                 )}
               >
                 {isSpeaking ? <RotateCw size={48} className="animate-spin" /> : <Volume2 size={48} />}
+              </button>
+              <button
+                onClick={() => handleSpeak(0.75)}
+                disabled={isSpeaking}
+                className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-xs font-bold disabled:opacity-50"
+              >
+                慢速再听一遍（0.75x）
               </button>
               <div className="text-center">
                 <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">点击图标播放音频</p>
@@ -229,10 +310,59 @@ export function DictationModule({
                 </button>
               ) : (
                 <button onClick={nextItem} className="w-full bg-slate-800 py-4 rounded-2xl text-white font-bold shadow-xl shadow-slate-200 active:scale-95 transition-all flex items-center justify-center gap-2">
-                  下一题
+                  {currentIndex >= currentData.length - 1 ? '结束本轮听写' : '下一题'}
                   <ChevronRight size={18} />
                 </button>
               )}
+            </div>
+          </div>
+        ) : currentData.length > 0 && finished ? (
+          <div className="py-6 space-y-5">
+            <div className="text-center">
+              <div className="text-xs font-bold uppercase tracking-[0.25em] text-slate-400">Round Summary</div>
+              <div className="text-3xl font-black text-slate-800 mt-2">
+                {score.total > 0 ? Math.round((score.correct / score.total) * 100) : 0}%
+              </div>
+              <div className="text-sm text-slate-500 mt-1">
+                本轮 {mode === 'word' ? '单词' : '句子'}听写 答对 {score.correct} / {score.total}
+              </div>
+            </div>
+
+            {wrongItems.length > 0 ? (
+              <div className="rounded-2xl bg-rose-50 border border-rose-100 p-4">
+                <div className="text-xs font-bold text-rose-700 mb-2">需要再听一遍的 {wrongItems.length} 条</div>
+                <div className="space-y-2">
+                  {wrongItems.map((item) => (
+                    <div key={itemKey(item)} className="flex items-center justify-between gap-3 rounded-xl bg-white/70 px-3 py-2">
+                      <span className="text-sm font-mono text-rose-700">
+                        {mode === 'word' ? (item as any).word : (item as any).text}
+                      </span>
+                      <button
+                        onClick={() => play(mode === 'word' ? (item as any).word : (item as any).text, 0.85)}
+                        className="text-xs font-bold text-slate-500"
+                      >
+                        再听一次
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-sm text-emerald-700">
+                本轮全对，可以切到另一种题型，或者进入下一个课时。
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-3">
+              {wrongItems.length > 0 && (
+                <button onClick={practiceWrongOnly} className="px-4 py-3 rounded-2xl bg-rose-500 text-white text-sm font-bold">
+                  只练错题（{wrongItems.length}）
+                </button>
+              )}
+              <button onClick={resetRound} className="px-4 py-3 rounded-2xl bg-slate-800 text-white text-sm font-bold inline-flex items-center gap-2">
+                <RefreshCw size={16} />
+                重新开始一轮
+              </button>
             </div>
           </div>
         ) : (
@@ -246,7 +376,10 @@ export function DictationModule({
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
           <div className="text-xs text-slate-400">当前进度</div>
-          <div className="font-bold text-slate-700">{currentData.length > 0 ? currentIndex + 1 : 0} / {currentData.length}</div>
+          <div className="font-bold text-slate-700">
+            {currentData.length > 0 ? Math.min(currentIndex + 1, currentData.length) : 0} / {currentData.length}
+            {answeredIds.length > 0 && <span className="text-slate-400 font-normal"> · 已答 {answeredIds.length}</span>}
+          </div>
         </div>
         <div className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
           <div className="text-xs text-slate-400">正确率</div>

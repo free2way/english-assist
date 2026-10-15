@@ -117,7 +117,11 @@ const IS_VERCEL =
   Boolean(process.env.VERCEL_ENV) ||
   Boolean(process.env.NOW_REGION);
 const ADMIN_USERNAME = 'admin';
-const ADMIN_PASSWORD = 'admin1234';
+// Deployments can override the seeded admin password via ADMIN_INITIAL_PASSWORD.
+// The hard-coded default only exists so a fresh local checkout still boots.
+const ADMIN_INITIAL_PASSWORD = process.env.ADMIN_INITIAL_PASSWORD?.trim();
+const ADMIN_PASSWORD = ADMIN_INITIAL_PASSWORD || 'admin1234';
+const USING_DEFAULT_ADMIN_PASSWORD = !ADMIN_INITIAL_PASSWORD;
 const DEFAULT_SESSION_HOURS = 24 * 7;
 const ALLOWED_SESSION_HOURS = new Set([12, 24 * 7, 24 * 30]);
 const DEFAULT_AI_MODEL = process.env.AI_MODEL?.trim() || 'gemini-2.5-flash';
@@ -316,6 +320,11 @@ const createDefaultAdmin = async () => {
     [ADMIN_USERNAME]
   );
   if (existingAdmin) return;
+  if (USING_DEFAULT_ADMIN_PASSWORD) {
+    console.warn(
+      '[security] 正在使用默认管理员口令创建 admin 账号。请在部署环境设置 ADMIN_INITIAL_PASSWORD 并在首次登录后修改密码。'
+    );
+  }
 
   const password = createPasswordRecord(ADMIN_PASSWORD);
   await executeStatement(

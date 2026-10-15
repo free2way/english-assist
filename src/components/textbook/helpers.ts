@@ -2,6 +2,24 @@ import type { LessonStageKey, StudyState, UnitBundle } from './types';
 
 export const createTaskId = (unitId: string, stage: LessonStageKey) => `${unitId}:${stage}`;
 
+/**
+ * Local-time date key (yyyy-mm-dd). `toISOString()` returns UTC, which made
+ * check-ins and streaks slip by a day between 00:00 and 08:00 in UTC+8.
+ */
+export const toLocalDateKey = (date: Date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const addDays = (dateKey: string, days: number) => {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(year, (month || 1) - 1, day || 1);
+  date.setDate(date.getDate() + days);
+  return toLocalDateKey(date);
+};
+
 export const normalizeGrammarAnswer = (value: string) =>
   value
     .trim()

@@ -55,11 +55,14 @@ import {
 import { cn } from './lib/utils';
 import { TextbookModule } from './components/textbook/TextbookModule';
 import {
+  addDays,
+  calculateTextSimilarity,
   createTaskId,
   getLessonOutcomeLabel,
   getPronunciationHint,
   getStageLabel,
   normalizeGrammarAnswer,
+  toLocalDateKey,
 } from './components/textbook/helpers';
 
 // --- Mock Data ---
@@ -330,6 +333,12 @@ interface MistakeRecord {
   reason?: MistakeReason;
   hint?: string;
   createdAt: string;
+  /** Set when the mistake has been re-practised successfully (or cleared by hand). */
+  resolved?: boolean;
+  retryCount?: number;
+  /** yyyy-mm-dd; the review pack orders by this so old mistakes surface first. */
+  dueAt?: string;
+  lastRetriedAt?: string;
 }
 
 interface DailyCheckinRecord {
@@ -344,6 +353,16 @@ interface ChallengeAttempt {
   id: string;
   unitId: string;
   score: number;
+  total: number;
+  completedAt: string;
+  details?: Array<{ id: string; kind: string; prompt: string; answer: string; expected?: string; correct: boolean }>;
+}
+
+interface DictationAttempt {
+  id: string;
+  unitId: string;
+  mode: 'word' | 'sentence';
+  correct: number;
   total: number;
   completedAt: string;
 }
@@ -419,6 +438,7 @@ interface StudyState {
   mistakes: MistakeRecord[];
   dailyCheckins: DailyCheckinRecord[];
   challengeAttempts: ChallengeAttempt[];
+  dictationAttempts: DictationAttempt[];
   pronunciationAssessments: PronunciationAssessmentRecord[];
   agentEvents: AgentEventRecord[];
 }
@@ -811,6 +831,7 @@ const createInitialStudyState = (units: UnitBundle[]): StudyState => ({
   mistakes: [],
   dailyCheckins: [],
   challengeAttempts: [],
+  dictationAttempts: [],
   pronunciationAssessments: [],
   agentEvents: [],
 });
@@ -832,12 +853,13 @@ const normalizeStudyState = (raw: Partial<StudyState> | null, units: UnitBundle[
     mistakes: Array.isArray(raw.mistakes) ? raw.mistakes.slice(0, 30) : [],
     dailyCheckins: Array.isArray(raw.dailyCheckins) ? raw.dailyCheckins.slice(0, 30) : [],
     challengeAttempts: Array.isArray(raw.challengeAttempts) ? raw.challengeAttempts.slice(0, 20) : [],
+    dictationAttempts: Array.isArray(raw.dictationAttempts) ? raw.dictationAttempts.slice(0, 40) : [],
     pronunciationAssessments: Array.isArray(raw.pronunciationAssessments) ? raw.pronunciationAssessments.slice(0, 30) : [],
     agentEvents: Array.isArray(raw.agentEvents) ? raw.agentEvents.slice(0, 40) : [],
   };
 };
 
-const getTodayKey = () => new Date().toISOString().slice(0, 10);
+const getTodayKey = () => toLocalDateKey();
 
 const getOrCreateDailyCheckin = (studyState: StudyState, date: string): DailyCheckinRecord => {
   return studyState.dailyCheckins.find((item) => item.date === date) || {
@@ -863,7 +885,7 @@ const getCheckinStreak = (dailyCheckins: DailyCheckinRecord[]) => {
   const cursor = new Date();
 
   while (true) {
-    const date = cursor.toISOString().slice(0, 10);
+    const date = toLocalDateKey(cursor);
     if (!checkedDates.has(date)) break;
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
@@ -944,12 +966,14 @@ const buildSpeakingFeedback = (userText: string, unit: UnitBundle | null) => {
 const buildReviewPack = (studyState: StudyState): ReviewPackItem[] => {
   const seen = new Set<string>();
   return studyState.mistakes
+    .filter((item) => !item.resolved)
     .filter((item) => {
       const key = `${item.stage}:${item.prompt}:${item.reason || 'none'}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
+    .sort((a, b) => (a.dueAt || a.createdAt).localeCompare(b.dueAt || b.createdAt))
     .slice(0, 3)
     .map((mistake) => ({
       id: `review-${mistake.id}`,
@@ -1295,11 +1319,75 @@ const getChallengeHistoryForUnit = (studyState: StudyState, unitId: string) => {
   return studyState.challengeAttempts.filter((attempt) => attempt.unitId === unitId);
 };
 
-const buildSevenDayTrend = (dailyCheckins: DailyCheckinRecord[]) => {
+interface ChallengeQuestionInput {
+  id: string;
+  prompt: string;
+  expected: string;
+  kind: string;
+}
+
+/**
+ * Scores one challenge answer. The old implementation gave a point for any
+ * non-empty textarea, which made the unit assessment meaningless.
+ */
+const scoreChallengeAnswer = (
+  question: ChallengeQuestionInput,
+  answer: string,
+  unit: UnitBundle | null,
+): { correct: boolean; detail: string } => {
+  const trimmed = answer.trim();
+  if (!trimmed) return { correct: false, detail: '未作答' };
+
+  const normalizedAnswer = normalizeGrammarAnswer(trimmed);
+  const taskHint = question.kind === 'sentence'
+    ? '先用中文说清句子意思，再跟读英文原句。'
+    : question.kind === 'speaking'
+      ? '至少说出 3 句完整英文，观点 + 原因。'
+      : '回到课时1复习这个词的含义与用法。';
+
+  if (question.kind === 'vocab' || question.kind === 'meaning') {
+    const segments = question.expected
+      .split(/[；;、,，/／\s]+/)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    const hits = segments.filter((segment) => normalizedAnswer.includes(normalizeGrammarAnswer(segment)));
+    const ratio = segments.length > 0 ? hits.length / segments.length : 0;
+    const correct = ratio >= 0.5 || normalizedAnswer.includes(normalizeGrammarAnswer(question.expected));
+    return {
+      correct,
+      detail: correct
+        ? `命中要点：${hits.slice(0, 3).join('、') || question.expected}`
+        : `参考答案：${question.expected}。${taskHint}`,
+    };
+  }
+
+  if (question.kind === 'sentence') {
+    const similarity = calculateTextSimilarity(trimmed, question.expected);
+    const cjk = /[\u4e00-\u9fa5]/.test(question.expected);
+    const coverage = cjk
+      ? (() => {
+        const chars = Array.from(new Set(question.expected.replace(/[^\u4e00-\u9fa5]/g, '').split('')));
+        if (chars.length === 0) return 0;
+        return chars.filter((char) => trimmed.includes(char)).length / chars.length;
+      })()
+      : similarity / 100;
+    const correct = coverage >= 0.6 || similarity >= 80;
+    return {
+      correct,
+      detail: correct ? '要点覆盖到位。' : `参考：${question.expected}。${taskHint}`,
+    };
+  }
+
+  const feedback = buildSpeakingFeedback(trimmed, unit);
+  return {
+    correct: feedback.score >= 2,
+    detail: feedback.score >= 2 ? feedback.hint : `${feedback.hint}（${taskHint}）`,
+  };
+};const buildSevenDayTrend = (dailyCheckins: DailyCheckinRecord[]) => {
   return Array.from({ length: 7 }).map((_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - (6 - index));
-    const dateKey = date.toISOString().slice(0, 10);
+    const dateKey = toLocalDateKey(date);
     const label = `${date.getMonth() + 1}/${date.getDate()}`;
     const record = dailyCheckins.find((item) => item.date === dateKey);
     const status = record ? calculateCheckinStatus(record) : { progressCount: 0, ready: false };
@@ -1824,13 +1912,13 @@ const Dashboard = ({
             </p>
           </div>
           <button
-            onClick={() => challengeStatus.ready ? onOpenChallenge() : onOpenStage(studyState.currentStage)}
+            onClick={() => onOpenChallenge()}
             className={cn(
               "px-5 py-3 rounded-2xl text-white font-bold",
               challengeStatus.ready ? "bg-emerald-500" : "bg-slate-800"
             )}
           >
-            {challengeStatus.ready ? '开始单元闯关' : '继续积累进度'}
+            {challengeStatus.ready ? '开始单元闯关' : '先试做一次闯关'}
           </button>
         </div>
         <div className="mt-5">
@@ -2861,6 +2949,8 @@ export default function App() {
   const [selectedTextbook, setSelectedTextbook] = useState<TextbookContent | null>(null);
   const [textbookError, setTextbookError] = useState('');
   const [studyState, setStudyState] = useState<StudyState>(createInitialStudyState([]));
+  const [retryTarget, setRetryTarget] = useState<MistakeRecord | null>(null);
+  const requestSpeechToken = () => apiFetch<SpeechTokenResponse>('/api/speech-token');
 
   useEffect(() => {
     const restoreSession = async () => {
@@ -3108,7 +3198,7 @@ export default function App() {
     }));
   };
 
-  const handleAddMistake = (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => {
+  const handleAddMistake = useCallback((record: Omit<MistakeRecord, 'id' | 'createdAt'>) => {
     setStudyState((prev) => ({
       ...prev,
       mistakes: [
@@ -3116,6 +3206,9 @@ export default function App() {
           ...record,
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           createdAt: new Date().toISOString(),
+          resolved: false,
+          retryCount: 0,
+          dueAt: getTodayKey(),
         },
         ...prev.mistakes.filter((item) => !(item.prompt === record.prompt && item.stage === record.stage && item.reason === record.reason)),
       ].slice(0, 30),
@@ -3128,6 +3221,34 @@ export default function App() {
         stage: record.stage,
       }),
     }));
+  }, []);
+
+  /** Marks matching mistakes as done (re-practised correctly, or cleared by hand). */
+  const resolveMistakes = (matcher: (mistake: MistakeRecord) => boolean, reasonLabel: string) => {
+    setStudyState((prev) => {
+      const targets = prev.mistakes.filter((item) => !item.resolved && matcher(item));
+      if (targets.length === 0) return prev;
+      const ids = new Set(targets.map((item) => item.id));
+      const now = new Date().toISOString();
+      return {
+        ...prev,
+        mistakes: prev.mistakes.map((item) => (
+          ids.has(item.id) ? { ...item, resolved: true, lastRetriedAt: now } : item
+        )),
+        agentEvents: appendAgentEvent(prev.agentEvents, {
+          agent: 'assessment',
+          type: 'feedback',
+          title: `复练通过，销账 ${targets.length} 条`,
+          detail: `${reasonLabel}：${targets[0].prompt}`,
+          unitId: targets[0].unitId,
+          stage: targets[0].stage,
+        }),
+      };
+    });
+  };
+
+  const handleResolveMistake = (mistake: MistakeRecord) => {
+    resolveMistakes((item) => item.id === mistake.id, '手动标记已解决');
   };
 
   const handleRetryMistake = (mistake: MistakeRecord) => {
@@ -3135,8 +3256,146 @@ export default function App() {
       ...prev,
       currentUnitId: mistake.unitId,
       currentStage: mistake.stage,
+      mistakes: prev.mistakes.map((item) => (
+        item.id === mistake.id
+          ? { ...item, retryCount: (item.retryCount || 0) + 1, lastRetriedAt: new Date().toISOString() }
+          : item
+      )),
     }));
-    setActiveTab(getTextbookTabByStage(mistake.stage));
+    // Route to the module that can actually re-ask this question: the old
+    // mapping sent every non-dictation mistake to the sentence page.
+    setRetryTarget(mistake);
+    setActiveTab(
+      mistake.category === 'dictation'
+        ? 'dictation'
+        : mistake.category === 'grammar'
+          ? 'textbook-grammar'
+          : mistake.category === 'vocab'
+            ? 'textbook-preview'
+            : 'textbook-reading',
+    );
+  };
+
+  const handleDictationAttempt = (attempt: { mode: 'word' | 'sentence'; correct: number; total: number }) => {
+    if (!currentUnit) return;
+    setStudyState((prev) => ({
+      ...prev,
+      dictationAttempts: [
+        {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          unitId: currentUnit.id,
+          mode: attempt.mode,
+          correct: attempt.correct,
+          total: attempt.total,
+          completedAt: new Date().toISOString(),
+        },
+        ...prev.dictationAttempts,
+      ].slice(0, 40),
+      agentEvents: appendAgentEvent(prev.agentEvents, {
+        agent: 'assessment',
+        type: 'assessment',
+        title: `听写完成 ${attempt.correct}/${attempt.total}`,
+        detail: attempt.total > 0 && attempt.correct === attempt.total
+          ? '本轮听写全对，评测反馈 Agent 建议进入下一课时。'
+          : '本轮听写有错题，已写入错题本，可按"只练错题"再来一轮。',
+        unitId: currentUnit.id,
+        stage: 'dictation',
+      }),
+    }));
+  };
+
+  const handleChallengeSubmit = (payload: {
+    score: number;
+    total: number;
+    details: Array<{ id: string; kind: string; prompt: string; answer: string; expected: string; correct: boolean }>;
+  }) => {
+    if (!currentUnit) return;
+    const wrong = payload.details.filter((detail) => !detail.correct);
+    const unitTitleFallback = currentUnit.title;
+    setStudyState((prev) => {
+      const now = new Date().toISOString();
+      const challengeMistakes: MistakeRecord[] = wrong.map((detail) => {
+        const category: MistakeCategory = detail.kind === 'vocab' || detail.kind === 'meaning' ? 'vocab' : 'speaking';
+        const reason: MistakeReason = detail.kind === 'vocab' || detail.kind === 'meaning'
+          ? 'unknown_vocab'
+          : detail.kind === 'sentence'
+            ? 'sentence_structure'
+            : detail.answer.trim().split(/\s+/).filter(Boolean).length < 8
+              ? 'too_short'
+              : 'off_topic';
+        return {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          unitId: currentUnit.id,
+          category,
+          stage: 'speaking',
+          prompt: `单元闯关：${detail.prompt}`,
+          expected: detail.expected || unitTitleFallback,
+          answer: detail.answer,
+          reason,
+          hint: detail.kind === 'sentence'
+            ? '先听原句并跟读，再用中文说出句子意思。'
+            : '回到课时1复习该词的含义与用法，然后重新闯关。',
+          createdAt: now,
+          resolved: false,
+          retryCount: 0,
+          dueAt: getTodayKey(),
+        };
+      });
+
+      return {
+        ...prev,
+        challengeAttempts: [
+          {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            unitId: currentUnit.id,
+            score: payload.score,
+            total: payload.total,
+            completedAt: now,
+            details: payload.details,
+          },
+          ...prev.challengeAttempts,
+        ].slice(0, 20),
+        mistakes: [...challengeMistakes, ...prev.mistakes].slice(0, 30),
+        dailyCheckins: updateTodayRecord(prev, (record) => ({ ...record, challengeCompleted: true })),
+        agentEvents: appendAgentEvent(prev.agentEvents, {
+          agent: 'assessment',
+          type: 'assessment',
+          title: `单元闯关 ${payload.score}/${payload.total}`,
+          detail: wrong.length === 0
+            ? '闯关全部答对，评测反馈 Agent 会建议进入下一个单元。'
+            : `${wrong.length} 道题未通过，已写入错题本并影响下一步推荐。`,
+          unitId: currentUnit.id,
+          stage: 'speaking',
+        }),
+      };
+    });
+  };
+
+  /** Grammar exercises answered correctly clear matching mistake-book entries. */
+  const resolveGrammarMistakesForExercise = (exerciseId: string) => {
+    const exercise = currentUnit?.grammar.exercises.find((item) => item.id === exerciseId);
+    if (!exercise) return;
+    resolveMistakes(
+      (item) => item.category === 'grammar'
+        && normalizeGrammarAnswer(item.expected) === normalizeGrammarAnswer(exercise.answer)
+        && item.prompt.includes(exercise.question),
+      '语法复练通过',
+    );
+  };
+
+  const speakWithAzure = async (text: string, accent: 'US' | 'UK' = 'US', rate = 1): Promise<boolean> => {
+    try {
+      await speakTextWithAzure({
+        getToken: requestSpeechToken,
+        text,
+        voiceName: accent === 'US' ? 'en-US-AvaMultilingualNeural' : 'en-GB-SoniaNeural',
+        rate,
+      });
+      return true;
+    } catch (error) {
+      console.warn('Azure TTS 播放失败，回退浏览器语音', error);
+    }
+    return playBrowserTTS(text, accent, rate);
   };
 
   const handleCompleteRecommendation = (item: RecommendationItem) => {
@@ -3179,36 +3438,6 @@ export default function App() {
 
   const handleOpenChallenge = () => {
     setActiveTab('challenge');
-  };
-
-  const handleCompleteChallenge = (score: number, total: number) => {
-    if (!currentUnit) return;
-    setStudyState((prev) => ({
-      ...prev,
-      challengeAttempts: [
-        {
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          unitId: currentUnit.id,
-          score,
-          total,
-          completedAt: new Date().toISOString(),
-        },
-        ...prev.challengeAttempts,
-      ].slice(0, 20),
-      dailyCheckins: updateTodayRecord(prev, (record) => ({
-        ...record,
-        challengeCompleted: true,
-      })),
-      agentEvents: appendAgentEvent(prev.agentEvents, {
-        agent: 'assessment',
-        type: 'assessment',
-        title: `单元闯关完成 ${score}/${total}`,
-        detail: '评测反馈 Agent 汇总闯关结果，并把掌握度信号交给教师洞察 Agent。',
-        unitId: currentUnit.id,
-        stage: 'speaking',
-      }),
-    }));
-    setActiveTab('dashboard');
   };
 
   const navItems: Array<{ id: AppTabKey; label: string; icon: React.ElementType; primary?: boolean }> = [
@@ -3450,7 +3679,10 @@ export default function App() {
                   onMarkWord={handleMarkWord}
                   onToggleSentenceFollowed={handleToggleSentenceFollowed}
                   onCompleteStage={handleCompleteStage}
-                  onCompleteGrammarExercise={handleCompleteGrammarExercise}
+                  onCompleteGrammarExercise={(exerciseId) => {
+                    handleCompleteGrammarExercise(exerciseId);
+                    resolveGrammarMistakesForExercise(exerciseId);
+                  }}
                   onAddPronunciationAssessment={handleAddPronunciationAssessment}
                   onAddMistake={handleAddMistake}
                   playWordAudio={playWordAudio}
@@ -3473,9 +3705,11 @@ export default function App() {
                   currentUnit={currentUnit}
                   onCompleteStage={handleCompleteStage}
                   onAddMistake={handleAddMistake}
-                  playWordAudio={playWordAudio}
-                  generateTTS={generateTTS}
-                  playBrowserTTS={playBrowserTTS}
+                  speak={speakWithAzure}
+                  onRecordAttempt={handleDictationAttempt}
+                  retryTarget={retryTarget && retryTarget.category === 'dictation' ? retryTarget : null}
+                  onRetryTargetHandled={() => setRetryTarget(null)}
+                  onResolveMistake={handleResolveMistake}
                   classifyDictationIssue={classifyDictationIssue}
                   mistakeReasonLabels={MISTAKE_REASON_LABELS}
                 />
@@ -3495,10 +3729,14 @@ export default function App() {
                   studyState={studyState}
                   currentUnit={currentUnit}
                   onRetryMistake={handleRetryMistake}
+                  onResolveMistake={handleResolveMistake}
                   mistakeReasonLabels={MISTAKE_REASON_LABELS}
                   getWeaknessSummary={getWeaknessSummary}
                   buildReviewPack={buildReviewPack}
                   stageMeta={STAGE_META}
+                  onPracticeWeakWord={(word) => {
+                    void speakWithAzure(word, 'US', 0.9);
+                  }}
                 />
               )}
               {activeTab === 'profile' && (
@@ -3515,7 +3753,8 @@ export default function App() {
                   currentUnit={currentUnit}
                   studyState={studyState}
                   onBack={() => setActiveTab('dashboard')}
-                  onCompleteChallenge={handleCompleteChallenge}
+                  onSubmitResult={handleChallengeSubmit}
+                  scoreChallengeAnswer={scoreChallengeAnswer}
                   buildChallengeQuestions={buildChallengeQuestions}
                   getUnitChallengeStatus={getUnitChallengeStatus}
                   getChallengeHistoryForUnit={getChallengeHistoryForUnit}

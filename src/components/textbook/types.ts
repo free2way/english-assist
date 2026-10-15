@@ -196,6 +196,21 @@ export interface MistakeRecord {
   reason?: MistakeReason;
   hint?: string;
   createdAt: string;
+  /** Cleared from the review queue once re-practised correctly (or by hand). */
+  resolved?: boolean;
+  retryCount?: number;
+  /** yyyy-mm-dd, used to order the daily review pack. */
+  dueAt?: string;
+  lastRetriedAt?: string;
+}
+
+export interface DictationAttempt {
+  id: string;
+  unitId: string;
+  mode: 'word' | 'sentence';
+  correct: number;
+  total: number;
+  completedAt: string;
 }
 
 export interface StudyState {
@@ -211,7 +226,9 @@ export interface StudyState {
     score: number;
     total: number;
     completedAt: string;
+    details?: Array<{ id: string; kind: string; prompt: string; answer: string; expected?: string; correct: boolean }>;
   }>;
+  dictationAttempts: DictationAttempt[];
   dailyCheckins: DailyCheckinRecord[];
   mistakes: MistakeRecord[];
   pronunciationAssessments: PronunciationAssessmentRecord[];

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { CheckCircle2, Undo2, Volume2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { StatCard } from './StatCard';
+import { cn } from '../lib/utils';
 import { createTaskId, getStageLabel } from './textbook/helpers';
 import type {
   LessonStage,
@@ -18,30 +20,73 @@ interface StatisticsProps {
   studyState: StudyState;
   currentUnit: UnitBundle | null;
   onRetryMistake: (mistake: MistakeRecord) => void;
+  onResolveMistake: (mistake: MistakeRecord) => void;
   mistakeReasonLabels: Record<MistakeReason, string>;
   getWeaknessSummary: (studyState: StudyState) => WeaknessSummaryItem[];
   buildReviewPack: (studyState: StudyState) => ReviewPackItem[];
   stageMeta: LessonStage[];
+  onPracticeWeakWord: (word: string) => void;
 }
+
+const CATEGORY_LABELS: Record<MistakeRecord['category'], string> = {
+  vocab: '词汇',
+  dictation: '听写',
+  speaking: '口语',
+  grammar: '语法',
+};
 
 export function Statistics({
   studyState,
   currentUnit,
   onRetryMistake,
+  onResolveMistake,
   mistakeReasonLabels,
   getWeaknessSummary,
   buildReviewPack,
   stageMeta,
+  onPracticeWeakWord,
 }: StatisticsProps) {
   const [categoryFilter, setCategoryFilter] = useState<'all' | MistakeRecord['category']>('all');
   const [stageFilter, setStageFilter] = useState<'all' | LessonStageKey>('all');
   const [unitFilter, setUnitFilter] = useState<string>('all');
-  const totalTasks = studyState.completedTaskIds.length;
-  const accuracy = studyState.mistakes.length + totalTasks > 0
-    ? Math.round((totalTasks / (studyState.mistakes.length + totalTasks)) * 100)
-    : 100;
+  const [showResolved, setShowResolved] = useState(false);
+
+  const unresolvedMistakes = studyState.mistakes.filter((mistake) => !mistake.resolved);
+  const resolvedCount = studyState.mistakes.length - unresolvedMistakes.length;
+
+  const unit = currentUnit;
+  const completedStagesInUnit = unit
+    ? unit.stages.filter((stage) => studyState.completedTaskIds.includes(createTaskId(unit.id, stage.key))).length
+    : 0;
+
+  const dictationAttempts = (unit
+    ? studyState.dictationAttempts.filter((attempt) => attempt.unitId === unit.id)
+    : studyState.dictationAttempts).slice(0, 5);
+  const dictationTotals = dictationAttempts.reduce(
+    (acc, attempt) => ({ correct: acc.correct + attempt.correct, total: acc.total + attempt.total }),
+    { correct: 0, total: 0 },
+  );
+  const dictationAccuracy = dictationTotals.total > 0
+    ? Math.round((dictationTotals.correct / dictationTotals.total) * 100)
+    : null;
+
+  const challengeAttempts = unit
+    ? studyState.challengeAttempts.filter((attempt) => attempt.unitId === unit.id)
+    : studyState.challengeAttempts;
+  const latestChallenge = challengeAttempts[0];
+  const challengeRate = latestChallenge
+    ? Math.round((latestChallenge.score / Math.max(1, latestChallenge.total)) * 100)
+    : null;
+
+  const rangeStart = new Date();
+  rangeStart.setDate(rangeStart.getDate() - 6);
+  const weeklyProgress = studyState.dailyCheckins
+    .filter((record) => new Date(`${record.date}T00:00:00`) >= new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate()))
+    .reduce((sum, record) => sum + record.completedTaskIds.length + record.recommendationIds.length + (record.challengeCompleted ? 1 : 0), 0);
+
   const weaknessSummary = getWeaknessSummary(studyState);
   const filteredMistakes = studyState.mistakes.filter((mistake) => {
+    if (!showResolved && mistake.resolved) return false;
     if (categoryFilter !== 'all' && mistake.category !== categoryFilter) return false;
     if (stageFilter !== 'all' && mistake.stage !== stageFilter) return false;
     if (unitFilter !== 'all' && mistake.unitId !== unitFilter) return false;
@@ -58,7 +103,7 @@ export function Statistics({
     ? Math.round(pronunciationRecords.reduce((sum, item) => sum + item.pronunciationScore, 0) / pronunciationRecords.length)
     : null;
   const topActions = [
-    reviewPack[0] ? `先复练：${reviewPack[0].reasonLabel}` : '继续保持当前节奏',
+    reviewPack[0] ? `先复练：${reviewPack[0].reasonLabel}` : '当前没有到期的错题，可以继续推进主线',
     topWeakness?.count
       ? topWeakness.hint
       : '当前弱项压力不大，可以进入下一个课时',
@@ -72,11 +117,12 @@ export function Statistics({
     target: 1,
   }));
   const pieData = [
-    { name: '词汇', value: studyState.masteredWordIds.length || 1, color: '#10b981' },
-    { name: '跟读', value: studyState.followedSentenceIds.length || 1, color: '#3b82f6' },
-    { name: '语法', value: studyState.completedGrammarQuestionIds.length || 1, color: '#8b5cf6' },
-    { name: '错题复盘', value: studyState.mistakes.length || 1, color: '#f97316' },
+    { name: '词汇', value: studyState.masteredWordIds.length, color: '#10b981' },
+    { name: '跟读', value: studyState.followedSentenceIds.length, color: '#3b82f6' },
+    { name: '语法', value: studyState.completedGrammarQuestionIds.length, color: '#8b5cf6' },
+    { name: '已销账错题', value: resolvedCount, color: '#f97316' },
   ];
+  const pieTotal = pieData.reduce((sum, item) => sum + item.value, 0);
 
   return (
     <div className="space-y-6 pb-20">
@@ -88,11 +134,24 @@ export function Statistics({
               {currentUnit ? `当前跟踪单元：${currentUnit.unit} · ${currentUnit.title}` : '暂无当前单元'}
             </p>
           </div>
-          <div className="flex gap-3">
-            <StatCard label="已完成课时" value={`${totalTasks}/4`} colorClass="text-blue-500" />
-            <StatCard label="综合准确率" value={`${accuracy}%`} colorClass="text-emerald-500" />
-            <StatCard label="语法练习" value={String(studyState.completedGrammarQuestionIds.length)} colorClass="text-violet-500" />
-            <StatCard label="待复盘错题" value={String(studyState.mistakes.length)} colorClass="text-rose-500" />
+          <div className="flex flex-wrap gap-3">
+            <StatCard
+              label="已完成课时"
+              value={currentUnit ? `${completedStagesInUnit}/${currentUnit.stages.length}` : String(studyState.completedTaskIds.length)}
+              colorClass="text-blue-500"
+            />
+            <StatCard
+              label="听写正确率"
+              value={dictationAccuracy === null ? '--' : `${dictationAccuracy}%`}
+              colorClass="text-emerald-500"
+            />
+            <StatCard
+              label="最近闯关"
+              value={challengeRate === null ? '--' : `${challengeRate}%`}
+              colorClass="text-violet-500"
+            />
+            <StatCard label="待复盘错题" value={String(unresolvedMistakes.length)} colorClass="text-rose-500" />
+            <StatCard label="近 7 天完成任务" value={String(weeklyProgress)} colorClass="text-amber-500" />
           </div>
         </div>
       </div>
@@ -115,27 +174,35 @@ export function Statistics({
         </div>
 
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-          <h3 className="font-bold text-slate-800 mb-6">学习投入结构</h3>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={5} dataKey="value">
-                  {pieData.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex justify-center gap-4 mt-2">
-            {pieData.map((item) => (
-              <div key={item.name} className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
-                <span className="text-[10px] text-slate-500">{item.name}</span>
+          <h3 className="font-bold text-slate-800 mb-6">学习成果分布</h3>
+          {pieTotal > 0 ? (
+            <>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={5} dataKey="value">
+                      {pieData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-          </div>
+              <div className="flex flex-wrap justify-center gap-4 mt-2">
+                {pieData.map((item) => (
+                  <div key={item.name} className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
+                    <span className="text-[10px] text-slate-500">{item.name} {item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="h-64 flex items-center justify-center text-sm text-slate-400">
+              还没有积累到可展示的数据，先完成一次词汇预习或跟读吧。
+            </div>
+          )}
         </div>
       </div>
 
@@ -177,13 +244,18 @@ export function Statistics({
             </div>
 
             <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5">
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">待优先回练词</div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">待优先回练词（点一下听发音）</div>
               {latestPronunciation.weakWords.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {latestPronunciation.weakWords.map((word) => (
-                    <span key={word} className="px-3 py-2 rounded-xl bg-rose-50 border border-rose-100 text-rose-700 text-sm font-bold">
+                    <button
+                      key={word}
+                      onClick={() => onPracticeWeakWord(word)}
+                      className="px-3 py-2 rounded-xl bg-rose-50 border border-rose-100 text-rose-700 text-sm font-bold inline-flex items-center gap-1.5 hover:bg-rose-100 transition-colors"
+                    >
+                      <Volume2 size={14} />
                       {word}
-                    </span>
+                    </button>
                   ))}
                 </div>
               ) : (
@@ -193,7 +265,7 @@ export function Statistics({
           </div>
         ) : (
           <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5 text-sm text-slate-500">
-            还没有 Azure 发音评测记录。去教材页的“课文朗读训练”里点一次“Azure 发音评测”，这里就会开始累计数据。
+            还没有 Azure 发音评测记录。去教材页的“课文朗读训练”里点一次“开始录音朗读”，这里就会开始累计数据。
           </div>
         )}
       </div>
@@ -214,13 +286,13 @@ export function Statistics({
           <h3 className="font-bold text-slate-800 mb-4">弱项分析</h3>
           <div className="space-y-4">
             {weaknessSummary.map((item) => {
-              const total = Math.max(studyState.mistakes.length, 1);
+              const total = Math.max(unresolvedMistakes.length, 1);
               const value = Math.min(100, Math.round((item.count / total) * 100));
               return (
                 <div key={item.label}>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-slate-700 font-medium">{item.label}</span>
-                    <span className="text-slate-400">{value}% 关注度</span>
+                    <span className="text-slate-400">{item.count} 条 · {value}%</span>
                   </div>
                   <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div className="h-full rounded-full bg-blue-500" style={{ width: `${value}%` }} />
@@ -232,8 +304,21 @@ export function Statistics({
           </div>
         </div>
 
-        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-          <h3 className="font-bold text-slate-800 mb-4">错题本</h3>
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 md:col-span-2">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+            <h3 className="font-bold text-slate-800">
+              错题本
+              <span className="ml-2 text-xs font-normal text-slate-400">
+                待复盘 {unresolvedMistakes.length} 条 · 已销账 {resolvedCount} 条
+              </span>
+            </h3>
+            <button
+              onClick={() => setShowResolved((prev) => !prev)}
+              className="self-start px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold"
+            >
+              {showResolved ? '只看待复盘' : '显示已销账'}
+            </button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
             <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as 'all' | MistakeRecord['category'])} className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs outline-none">
               <option value="all">全部类型</option>
@@ -256,18 +341,33 @@ export function Statistics({
               ))}
             </select>
           </div>
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {filteredMistakes.length === 0 ? (
-              <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-sm text-emerald-700">
-                当前筛选条件下没有错题，可以切换筛选或继续推进课时。
+              <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-sm text-emerald-700 xl:col-span-2">
+                当前筛选条件下没有待复盘错题，可以切换筛选或继续推进课时。
               </div>
             ) : (
-              filteredMistakes.slice(0, 6).map((mistake) => (
-                <div key={mistake.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                  <div className="text-xs font-bold text-slate-400 mb-1">
-                    {mistake.stage === 'preview' ? '词汇预习' : mistake.stage === 'dictation' ? '听写巩固' : '口语表达'}
+              filteredMistakes.slice(0, 8).map((mistake) => (
+                <div
+                  key={mistake.id}
+                  className={cn(
+                    'rounded-2xl border p-4',
+                    mistake.resolved ? 'bg-slate-50 border-slate-200' : 'bg-slate-50 border-slate-100',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs font-bold text-slate-400">
+                      {CATEGORY_LABELS[mistake.category]}
+                      {mistake.retryCount ? ` · 已复练 ${mistake.retryCount} 次` : ''}
+                    </div>
+                    {mistake.resolved && (
+                      <div className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
+                        <CheckCircle2 size={14} />
+                        已销账
+                      </div>
+                    )}
                   </div>
-                  <div className="text-sm font-bold text-slate-800">{mistake.prompt}</div>
+                  <div className="text-sm font-bold text-slate-800 mt-1">{mistake.prompt}</div>
                   <div className="text-xs text-slate-500 mt-1">你的答案：{mistake.answer || '未作答'}</div>
                   <div className="text-xs text-rose-600 mt-1">正确内容：{mistake.expected}</div>
                   {mistake.reason && (
@@ -276,12 +376,23 @@ export function Statistics({
                   {mistake.hint && (
                     <div className="text-xs text-slate-500 mt-1">复习建议：{mistake.hint}</div>
                   )}
-                  <button
-                    onClick={() => onRetryMistake(mistake)}
-                    className="mt-3 px-3 py-2 rounded-xl bg-blue-500 text-white text-xs font-bold"
-                  >
-                    立即复练
-                  </button>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <button
+                      onClick={() => onRetryMistake(mistake)}
+                      className="px-3 py-2 rounded-xl bg-blue-500 text-white text-xs font-bold"
+                    >
+                      立即复练
+                    </button>
+                    {!mistake.resolved && (
+                      <button
+                        onClick={() => onResolveMistake(mistake)}
+                        className="px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 text-xs font-bold inline-flex items-center gap-1"
+                      >
+                        <Undo2 size={13} />
+                        标记已解决
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))
             )}

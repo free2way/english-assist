@@ -107,6 +107,28 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, driver: 'turso-libsql' });
 });
 
+// Cheap brute-force guard for the login endpoint. In-memory means each
+// serverless instance keeps its own window, which still stops sustained
+// password guessing from a single client.
+const LOGIN_WINDOW_MS = 5 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 8;
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+const checkLoginRateLimit = (key: string) => {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || entry.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  entry.count += 1;
+  if (entry.count > LOGIN_MAX_ATTEMPTS) {
+    return { allowed: false, retryAfterSeconds: Math.ceil((entry.resetAt - now) / 1000) };
+  }
+  return { allowed: true, retryAfterSeconds: 0 };
+};
+
 app.get('/api/speech-token', requireAuth, async (_req, res) => {
   if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
     res.status(503).json({ error: 'Azure Speech 未配置，请设置 AZURE_SPEECH_KEY 和 AZURE_SPEECH_REGION' });
@@ -195,11 +217,19 @@ app.post('/api/auth/login', async (req, res) => {
     return;
   }
 
+  const loginKey = `${req.ip}|${username.trim().toLowerCase()}`;
+  const limit = checkLoginRateLimit(loginKey);
+  if (!limit.allowed) {
+    res.status(429).json({ error: `登录尝试过于频繁，请 ${limit.retryAfterSeconds} 秒后再试` });
+    return;
+  }
+
   const session = await createSessionForCredentials(username, password, sessionHours);
   if (!session) {
     res.status(401).json({ error: '用户名或密码错误' });
     return;
   }
+  loginAttempts.delete(loginKey);
 
   res.json(session);
 });
