@@ -164,6 +164,19 @@ Rules: at most 2 corrections and only for real grammar / word-choice / tense pro
 
 const AI_MAX_MESSAGE_LENGTH = 2000;
 
+/** Upstream providers wrap failures differently - OpenAI sends {error:{...}}
+ *  while Google's OpenAI-compatible endpoint sends [{error:{...}}]. Surface the
+ *  real cause (e.g. "Please pass a valid API key") instead of a bare status. */
+const describeUpstreamAiError = (data: any, rawText: string, status: number) => {
+  const candidate = Array.isArray(data) ? data[0] : data;
+  const message = candidate?.error?.message || candidate?.message;
+  if (typeof message === 'string' && message.trim()) {
+    return `AI 服务调用失败：${message.trim()}`;
+  }
+  const snippet = rawText.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return snippet ? `AI 服务调用失败 (${status})：${snippet}` : `AI 服务调用失败 (${status})`;
+};
+
 const extractJsonObject = (raw: string): any | null => {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
@@ -282,10 +295,16 @@ The student asked for a model answer: put the model answer itself in "reply" (2-
       clearTimeout(timeout);
     }
 
-    const data = await response.json().catch(() => ({}));
+    const rawText = await response.text().catch(() => '');
+    let data: any = {};
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      data = {};
+    }
     if (!response.ok) {
       res.status(502).json({
-        error: data?.error?.message || `AI 服务调用失败 (${response.status})`,
+        error: describeUpstreamAiError(data, rawText, response.status),
       });
       return;
     }

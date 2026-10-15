@@ -3268,6 +3268,9 @@ export default function App() {
     const user = currentUser;
     const textbookId = selectedTextbookId;
     if (!user || !textbookId) return;
+    // Never create an empty server row: hydrating a fresh device must not look
+    // like progress worth persisting (and must not stamp over real data).
+    if (isStudyStateEmpty(studyStateRef.current)) return;
     const updatedAt = new Date().toISOString();
     try {
       await apiFetch<{ ok: boolean; updatedAt: string }>('/api/study/state', {
