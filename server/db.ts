@@ -257,6 +257,45 @@ const schemaStatements = [
       PRIMARY KEY (user_id, textbook_id)
     )`,
   `CREATE INDEX IF NOT EXISTS idx_study_states_textbook_id ON study_states(textbook_id)`,
+  // Classes + homework. SQLite does not enforce foreign keys unless PRAGMA
+  // foreign_keys is enabled, so deletes in this file cascade by hand.
+  `
+    CREATE TABLE IF NOT EXISTS classes (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      grade TEXT NOT NULL DEFAULT '',
+      semester TEXT NOT NULL DEFAULT '',
+      school TEXT NOT NULL DEFAULT '',
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS class_members (
+      class_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (class_id, user_id),
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_class_members_user_id ON class_members(user_id)`,
+  `
+    CREATE TABLE IF NOT EXISTS homework_assignments (
+      id TEXT PRIMARY KEY,
+      class_id TEXT NOT NULL,
+      textbook_id TEXT NOT NULL,
+      unit_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      task_keys TEXT NOT NULL,
+      due_at TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
+    )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_homework_class_id ON homework_assignments(class_id)`,
 ];
 
 export interface StudyStateRecord {
@@ -337,6 +376,446 @@ export const listStudyStates = async (): Promise<StudyStateRecord[]> => {
       textbookId: row.textbook_id,
       state,
       updatedAt: row.updated_at,
+    };
+  });
+};
+
+// The four stages of a textbook unit the front end can assign as homework.
+export const HOMEWORK_TASK_KEYS = ['preview', 'reading', 'dictation', 'speaking'];
+
+export interface ClassMemberSummary {
+  userId: string;
+  username: string;
+  grade: string;
+  semester: string;
+  school: string;
+}
+
+export interface ClassSummary {
+  id: string;
+  name: string;
+  grade: string;
+  semester: string;
+  school: string;
+  createdAt: string;
+  members: ClassMemberSummary[];
+}
+
+export interface HomeworkAssignmentSummary {
+  id: string;
+  classId: string;
+  className: string;
+  textbookId: string;
+  unitId: string;
+  title: string;
+  taskKeys: string[];
+  dueAt: string | null;
+  createdAt: string;
+}
+
+export interface HomeworkStudentProgress {
+  userId: string;
+  username: string;
+  completed: boolean;
+  tasks: Record<string, boolean>;
+}
+
+export interface HomeworkTeacherView extends HomeworkAssignmentSummary {
+  students: HomeworkStudentProgress[];
+  completedCount: number;
+  totalCount: number;
+}
+
+export interface HomeworkStudentView extends HomeworkAssignmentSummary {
+  tasks: Record<string, boolean>;
+  completed: boolean;
+}
+
+/**
+ * Pure completion check over a study_states snapshot. A student finished a task
+ * when its `completedTaskIds` contains `${unitId}:${taskKey}` - the same id shape
+ * `createTaskId` builds in the browser. A missing or unparsable snapshot means
+ * "nothing completed" instead of throwing.
+ */
+export const computeTaskCompletion = (
+  stateJson: unknown,
+  unitId: string,
+  taskKeys: string[]
+): Record<string, boolean> => {
+  let state: any = stateJson;
+  if (typeof stateJson === 'string') {
+    try {
+      state = JSON.parse(stateJson);
+    } catch {
+      state = null;
+    }
+  }
+
+  const completedTaskIds: string[] =
+    state && typeof state === 'object' && Array.isArray(state.completedTaskIds)
+      ? state.completedTaskIds.map((taskId: unknown) => String(taskId))
+      : [];
+
+  const completion: Record<string, boolean> = {};
+  for (const taskKey of taskKeys) {
+    completion[taskKey] = completedTaskIds.includes(`${unitId}:${taskKey}`);
+  }
+  return completion;
+};
+
+const parseHomeworkTaskKeys = (raw: unknown): string[] => {
+  if (typeof raw !== 'string') return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((taskKey) => String(taskKey)) : [];
+  } catch {
+    return [];
+  }
+};
+
+const isAssignmentCompleted = (tasks: Record<string, boolean>, taskKeys: string[]) =>
+  taskKeys.length > 0 && taskKeys.every((taskKey) => tasks[taskKey] === true);
+
+const mapClassRow = (row: {
+  id: string;
+  name: string;
+  grade: string;
+  semester: string;
+  school: string;
+  created_at: string;
+}) => ({
+  id: row.id,
+  name: row.name,
+  grade: row.grade,
+  semester: row.semester,
+  school: row.school,
+  createdAt: row.created_at,
+});
+
+export const createClass = async (input: {
+  name: string;
+  grade?: string;
+  semester?: string;
+  school?: string;
+  createdBy?: string | null;
+}) => {
+  await initializeDatabase();
+  const id = crypto.randomUUID();
+  await executeStatement(
+    `
+      INSERT INTO classes (id, name, grade, semester, school, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    [
+      id,
+      input.name.trim(),
+      (input.grade ?? '').trim(),
+      (input.semester ?? '').trim(),
+      (input.school ?? '').trim(),
+      input.createdBy ?? null,
+    ]
+  );
+
+  const row = await queryFirst<{
+    id: string;
+    name: string;
+    grade: string;
+    semester: string;
+    school: string;
+    created_at: string;
+  }>(
+    `
+      SELECT id, name, grade, semester, school, created_at
+      FROM classes
+      WHERE id = ?
+    `,
+    [id]
+  );
+
+  return mapClassRow(row as any);
+};
+
+export const listClasses = async (): Promise<ClassSummary[]> => {
+  await initializeDatabase();
+  const classRows = await queryAll<{
+    id: string;
+    name: string;
+    grade: string;
+    semester: string;
+    school: string;
+    created_at: string;
+  }>(
+    `
+      SELECT id, name, grade, semester, school, created_at
+      FROM classes
+      ORDER BY created_at DESC, name
+    `
+  );
+
+  const memberRows = await queryAll<{
+    class_id: string;
+    user_id: string;
+    username: string;
+    grade: string;
+    semester: string;
+    school: string;
+  }>(
+    `
+      SELECT m.class_id, m.user_id, u.username, u.grade, u.semester, u.school
+      FROM class_members m
+      JOIN users u ON u.id = m.user_id
+      ORDER BY m.joined_at, u.username
+    `
+  );
+
+  const membersByClass = new Map<string, ClassMemberSummary[]>();
+  for (const row of memberRows) {
+    if (!membersByClass.has(row.class_id)) {
+      membersByClass.set(row.class_id, []);
+    }
+    membersByClass.get(row.class_id)!.push({
+      userId: row.user_id,
+      username: row.username,
+      grade: row.grade,
+      semester: row.semester,
+      school: row.school,
+    });
+  }
+
+  return classRows.map((row) => ({
+    ...mapClassRow(row),
+    members: membersByClass.get(row.id) ?? [],
+  }));
+};
+
+export const deleteClass = async (id: string) => {
+  await initializeDatabase();
+  const target = await queryFirst<{ id: string }>('SELECT id FROM classes WHERE id = ?', [id]);
+  if (!target) return false;
+  // Explicit cascade: the local libSQL file does not enable PRAGMA foreign_keys.
+  await executeStatement('DELETE FROM class_members WHERE class_id = ?', [id]);
+  await executeStatement('DELETE FROM homework_assignments WHERE class_id = ?', [id]);
+  await executeStatement('DELETE FROM classes WHERE id = ?', [id]);
+  return true;
+};
+
+export const addClassMember = async (classId: string, userId: string) => {
+  await initializeDatabase();
+  await executeStatement('INSERT OR IGNORE INTO class_members (class_id, user_id) VALUES (?, ?)', [
+    classId,
+    userId,
+  ]);
+};
+
+export const removeClassMember = async (classId: string, userId: string) => {
+  await initializeDatabase();
+  await executeStatement('DELETE FROM class_members WHERE class_id = ? AND user_id = ?', [classId, userId]);
+};
+
+export const createHomework = async (input: {
+  classId: string;
+  textbookId: string;
+  unitId: string;
+  title: string;
+  taskKeys: string[];
+  dueAt?: string | null;
+  createdBy?: string | null;
+}): Promise<HomeworkAssignmentSummary> => {
+  await initializeDatabase();
+  const id = crypto.randomUUID();
+  const taskKeys = [...new Set(input.taskKeys)];
+  const dueAt = input.dueAt?.trim() ? input.dueAt.trim() : null;
+
+  await executeStatement(
+    `
+      INSERT INTO homework_assignments (id, class_id, textbook_id, unit_id, title, task_keys, due_at, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      id,
+      input.classId,
+      input.textbookId,
+      input.unitId,
+      input.title.trim(),
+      JSON.stringify(taskKeys),
+      dueAt,
+      input.createdBy ?? null,
+    ]
+  );
+
+  const rows = await queryAll<{ created_at: string }>(
+    'SELECT created_at FROM homework_assignments WHERE id = ?',
+    [id]
+  );
+
+  return {
+    id,
+    classId: input.classId,
+    className: '',
+    textbookId: input.textbookId,
+    unitId: input.unitId,
+    title: input.title.trim(),
+    taskKeys,
+    dueAt,
+    createdAt: rows[0]?.created_at ?? new Date().toISOString(),
+  };
+};
+
+export const deleteHomework = async (id: string) => {
+  await initializeDatabase();
+  const target = await queryFirst<{ id: string }>('SELECT id FROM homework_assignments WHERE id = ?', [id]);
+  if (!target) return false;
+  await executeStatement('DELETE FROM homework_assignments WHERE id = ?', [id]);
+  return true;
+};
+
+/** Loads `user_id -> state_json` for one textbook, memoized per textbook id. */
+const loadStudyStateByTextbook = async (textbookId: string, cache: Map<string, Map<string, string>>) => {
+  const cached = cache.get(textbookId);
+  if (cached) return cached;
+
+  const rows = await queryAll<{ user_id: string; state_json: string }>(
+    'SELECT user_id, state_json FROM study_states WHERE textbook_id = ?',
+    [textbookId]
+  );
+  const states = new Map<string, string>();
+  for (const row of rows) {
+    states.set(row.user_id, row.state_json);
+  }
+  cache.set(textbookId, states);
+  return states;
+};
+
+export const listHomeworkForTeacher = async (classId?: string): Promise<HomeworkTeacherView[]> => {
+  await initializeDatabase();
+  const assignmentRows = await queryAll<{
+    id: string;
+    class_id: string;
+    class_name: string;
+    textbook_id: string;
+    unit_id: string;
+    title: string;
+    task_keys: string;
+    due_at: string | null;
+    created_at: string;
+  }>(
+    classId
+      ? `
+        SELECT h.id, h.class_id, c.name AS class_name, h.textbook_id, h.unit_id, h.title, h.task_keys, h.due_at, h.created_at
+        FROM homework_assignments h
+        JOIN classes c ON c.id = h.class_id
+        WHERE h.class_id = ?
+        ORDER BY h.created_at DESC
+      `
+      : `
+        SELECT h.id, h.class_id, c.name AS class_name, h.textbook_id, h.unit_id, h.title, h.task_keys, h.due_at, h.created_at
+        FROM homework_assignments h
+        JOIN classes c ON c.id = h.class_id
+        ORDER BY h.created_at DESC
+      `,
+    classId ? [classId] : []
+  );
+
+  const memberRows = await queryAll<{ class_id: string; user_id: string; username: string }>(
+    `
+      SELECT m.class_id, m.user_id, u.username
+      FROM class_members m
+      JOIN users u ON u.id = m.user_id
+      ORDER BY m.joined_at, u.username
+    `
+  );
+
+  const membersByClass = new Map<string, { userId: string; username: string }[]>();
+  for (const row of memberRows) {
+    if (!membersByClass.has(row.class_id)) {
+      membersByClass.set(row.class_id, []);
+    }
+    membersByClass.get(row.class_id)!.push({ userId: row.user_id, username: row.username });
+  }
+
+  const stateCache = new Map<string, Map<string, string>>();
+  const assignments: HomeworkTeacherView[] = [];
+
+  for (const row of assignmentRows) {
+    const taskKeys = parseHomeworkTaskKeys(row.task_keys);
+    const states = await loadStudyStateByTextbook(row.textbook_id, stateCache);
+    const students = (membersByClass.get(row.class_id) ?? []).map((member) => {
+      const tasks = computeTaskCompletion(states.get(member.userId) ?? null, row.unit_id, taskKeys);
+      return {
+        userId: member.userId,
+        username: member.username,
+        completed: isAssignmentCompleted(tasks, taskKeys),
+        tasks,
+      };
+    });
+
+    assignments.push({
+      id: row.id,
+      classId: row.class_id,
+      className: row.class_name,
+      textbookId: row.textbook_id,
+      unitId: row.unit_id,
+      title: row.title,
+      taskKeys,
+      dueAt: row.due_at ?? null,
+      createdAt: row.created_at,
+      students,
+      completedCount: students.filter((student) => student.completed).length,
+      totalCount: students.length,
+    });
+  }
+
+  return assignments;
+};
+
+export const listHomeworkForStudent = async (userId: string): Promise<HomeworkStudentView[]> => {
+  await initializeDatabase();
+  const rows = await queryAll<{
+    id: string;
+    class_id: string;
+    class_name: string;
+    textbook_id: string;
+    unit_id: string;
+    title: string;
+    task_keys: string;
+    due_at: string | null;
+    created_at: string;
+  }>(
+    `
+      SELECT h.id, h.class_id, c.name AS class_name, h.textbook_id, h.unit_id, h.title, h.task_keys, h.due_at, h.created_at
+      FROM homework_assignments h
+      JOIN classes c ON c.id = h.class_id
+      JOIN class_members m ON m.class_id = h.class_id AND m.user_id = ?
+      ORDER BY (h.due_at IS NULL), h.due_at, h.created_at DESC
+    `,
+    [userId]
+  );
+
+  // One query covers every textbook this student has a snapshot for.
+  const stateRows = await queryAll<{ textbook_id: string; state_json: string }>(
+    'SELECT textbook_id, state_json FROM study_states WHERE user_id = ?',
+    [userId]
+  );
+  const statesByTextbook = new Map<string, string>();
+  for (const row of stateRows) {
+    statesByTextbook.set(row.textbook_id, row.state_json);
+  }
+
+  return rows.map((row) => {
+    const taskKeys = parseHomeworkTaskKeys(row.task_keys);
+    const tasks = computeTaskCompletion(statesByTextbook.get(row.textbook_id) ?? null, row.unit_id, taskKeys);
+    return {
+      id: row.id,
+      classId: row.class_id,
+      className: row.class_name,
+      textbookId: row.textbook_id,
+      unitId: row.unit_id,
+      title: row.title,
+      taskKeys,
+      dueAt: row.due_at ?? null,
+      createdAt: row.created_at,
+      tasks,
+      completed: isAssignmentCompleted(tasks, taskKeys),
     };
   });
 };
@@ -600,6 +1079,9 @@ export const deleteUser = async (id: string) => {
   await executeStatement('DELETE FROM sessions WHERE user_id = ?', [id]);
   const before = await queryFirst<{ id: string }>('SELECT id FROM users WHERE id = ? AND role != ?', [id, 'admin']);
   if (!before) return false;
+  // Explicit cascade for the rows that reference this user.
+  await executeStatement('DELETE FROM class_members WHERE user_id = ?', [id]);
+  await executeStatement('DELETE FROM study_states WHERE user_id = ?', [id]);
   await executeStatement('DELETE FROM users WHERE id = ? AND role != ?', [id, 'admin']);
   return true;
 };

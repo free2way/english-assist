@@ -112,7 +112,7 @@ A6（听力专项）→ A7（整篇朗读）→ B2/B3（班级与作业）→ D2
 | E7b 本地日期 | 新增 `toLocalDateKey`/`addDays`，打卡、连续天数、7 天趋势改用本地时区（原来用 UTC，东八区 0-8 点会错位） | 代码层 |
 | E5 最小安全集 | `ADMIN_INITIAL_PASSWORD` 环境变量可覆盖初始管理员口令（默认值仍保留以便本地启动，并在 seed 时打印安全告警）；`/api/auth/login` 增加内存限流（5 分钟窗口 8 次，成功即清零） | 连续 9 次错误密码 → 第 9 次 429 |
 
-仍未做（按本文优先级继续）：C1-C4 激励、E2-E4 工程重构、E6 备份与 migration、B2/B3 班级与作业、B6 周报、D2 内容工作流。
+仍未做（按本文优先级继续）：C1-C4 激励、E2-E4 工程重构、E6 备份与 migration、B2/B3 班级与作业（→ 已在迭代 3 完成）、B6 周报、D2 内容工作流。
 
 ---
 
@@ -134,3 +134,31 @@ GET  /api/admin/study-states              # 教师/管理员：全体学生的�
 POST /api/ai/chat                         # { message, corrections?, context?, task? }
                                           # → { message, followUp?, corrections[] }
 ```
+
+---
+
+## 十、已完成（2026-10-15 迭代 3）
+
+| 项 | 实现要点 | 验证 |
+| --- | --- | --- |
+| B2 班级与学生名单 | 新增 `classes` / `class_members` 表与 `/api/classes`、`/api/class-members` 接口；教师端"班级管理"可建班/删班、把学生加入或移出班级（成员就是普通用户账号，role 仍为 admin/user） | 本地端到端：建班 → 加学生 → 列表回显成员 |
+| B3 布置作业与完成追踪 | 新增 `homework_assignments` 表与 `/api/homework`；教师选班级+教材+单元+任务类型（词汇预习/重点句跟读/听写巩固/口语表达）+截止日期即可布置；**完成情况由服务端从学生 `study_states` 推导**（判断 `completedTaskIds` 是否含 `<unitId>:<taskKey>`），无需学生额外上报；学生首页出现"老师布置的作业"卡片（任务打勾、截止日期、逾期标红、点击"去完成"直达对应模块），完成后卡片与教师端同步刷新 | 本地端到端：学生完成听写 → 教师端该生 `dictation:true`；再完成词汇预习 → 教师端 `完成 1/1`、学生卡片显示"已完成" |
+| 顺带修复 | ① 切换教材时 `availableUnits` 仍是上一本的单元，导致学习状态里写进**错误教材的 unit id**（先加 `textbookContentReady` 闸门再水合/拉取）；② 管理员退出后学生登录会停留在管理页的空壳 UI（非管理员强制回首页）；③ `deleteUser` 现在会一并清理该生的班级成员关系与 `study_states`，`DELETE /api/classes` 会清理成员与该班作业 | 都在端到端流程中复现后验证修复 |
+
+### 关键接口（新增）
+
+```
+GET    /api/classes                       # 教师：班级列表（含成员）
+POST   /api/classes                       # { name, grade?, semester?, school? } → 201 { class }
+DELETE /api/classes?id=xxx                # 教师：删班（连带成员与该班作业）
+POST   /api/class-members                 # { classId, userId }
+DELETE /api/class-members?classId=&userId=
+GET    /api/homework?classId=xxx          # 教师视图：作业 + 每个学生的完成情况
+GET    /api/homework                      # 学生视图（同一路径按角色分流）：自己班级的作业 + 自己的完成情况
+POST   /api/homework                      # { classId, textbookId, unitId, title, taskKeys[], dueAt? }
+DELETE /api/homework?id=xxx
+```
+
+> 约定：这三个资源都刻意保持「/api/ + 单段路径」，因为 Vercel 的 catch-all 只覆盖一层路径，多层路径在生产会直接 404（血泪教训）。新增接口也请遵守。
+
+仍未做：B4 导出 CSV、B5 批改/评语、B6 周报与家长报告、C1-C4 激励、D2 内容工作流、E2-E4 工程重构、E6 备份与 migration。

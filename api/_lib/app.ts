@@ -1,16 +1,26 @@
 import express from 'express';
 import {
+  addClassMember,
   changePassword,
   cleanupExpiredSessions,
+  createClass,
+  createHomework,
   createSessionForCredentials,
   createUser,
+  deleteClass,
+  deleteHomework,
   deleteSession,
   deleteUser,
   getAIServiceConfig,
   getStudyState,
   getUserByToken,
   getTextbookContent,
+  HOMEWORK_TASK_KEYS,
+  listClasses,
+  listHomeworkForStudent,
+  listHomeworkForTeacher,
   listStudyStates,
+  removeClassMember,
   upsertStudyState,
   importAllTextbookSamples,
   importTextbookSample,
@@ -237,6 +247,165 @@ app.put('/api/study/state', requireAuth, async (req, res) => {
 
 app.get('/api/admin/study-states', requireAuth, requireAdmin, async (_req, res) => {
   res.json({ states: await listStudyStates() });
+});
+
+/** Validated, de-duplicated task keys, or null when the payload is unusable. */
+const normalizeHomeworkTaskKeys = (raw: unknown) => {
+  if (!Array.isArray(raw)) return null;
+  const taskKeys: string[] = [];
+  for (const value of raw) {
+    const taskKey = typeof value === 'string' ? value.trim() : '';
+    if (!HOMEWORK_TASK_KEYS.includes(taskKey)) return null;
+    if (!taskKeys.includes(taskKey)) taskKeys.push(taskKey);
+  }
+  return taskKeys;
+};
+
+app.get('/api/classes', requireAuth, requireAdmin, async (_req, res) => {
+  res.json({ classes: await listClasses() });
+});
+
+app.post('/api/classes', requireAuth, requireAdmin, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const grade = typeof req.body?.grade === 'string' ? req.body.grade.trim() : '';
+  const semester = typeof req.body?.semester === 'string' ? req.body.semester.trim() : '';
+  const school = typeof req.body?.school === 'string' ? req.body.school.trim() : '';
+
+  if (!name) {
+    res.status(400).json({ error: '请填写班级名称' });
+    return;
+  }
+  if (name.length > 40) {
+    res.status(400).json({ error: '班级名称不能超过 40 个字' });
+    return;
+  }
+
+  const created = await createClass({ name, grade, semester, school, createdBy: user.id });
+  res.status(201).json({ class: { ...created, members: [] } });
+});
+
+app.delete('/api/classes', requireAuth, requireAdmin, async (req, res) => {
+  const id = typeof req.query?.id === 'string' ? req.query.id.trim() : '';
+  if (!id) {
+    res.status(400).json({ error: '缺少班级标识' });
+    return;
+  }
+
+  const ok = await deleteClass(id);
+  if (!ok) {
+    res.status(404).json({ error: '班级不存在' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/class-members', requireAuth, requireAdmin, async (req, res) => {
+  const classId = typeof req.body?.classId === 'string' ? req.body.classId.trim() : '';
+  const userId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+  if (!classId || !userId) {
+    res.status(400).json({ error: '缺少班级或学生标识' });
+    return;
+  }
+
+  const classes = await listClasses();
+  if (!classes.some((item) => item.id === classId)) {
+    res.status(404).json({ error: '班级不存在' });
+    return;
+  }
+  const users = await listUsers();
+  if (!users.some((item) => item.id === userId)) {
+    res.status(404).json({ error: '学生不存在' });
+    return;
+  }
+
+  await addClassMember(classId, userId);
+  res.json({ ok: true });
+});
+
+app.delete('/api/class-members', requireAuth, requireAdmin, async (req, res) => {
+  const classId = typeof req.query?.classId === 'string' ? req.query.classId.trim() : '';
+  const userId = typeof req.query?.userId === 'string' ? req.query.userId.trim() : '';
+  if (!classId || !userId) {
+    res.status(400).json({ error: '缺少班级或学生标识' });
+    return;
+  }
+
+  await removeClassMember(classId, userId);
+  res.json({ ok: true });
+});
+
+// Same path for both roles: teachers get the whole class view (optionally
+// filtered by classId), students get only their own classes' assignments.
+app.get('/api/homework', requireAuth, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  if (user.role === 'admin') {
+    const classId = typeof req.query?.classId === 'string' ? req.query.classId.trim() : '';
+    res.json({ assignments: await listHomeworkForTeacher(classId || undefined) });
+    return;
+  }
+
+  res.json({ assignments: await listHomeworkForStudent(user.id) });
+});
+
+app.post('/api/homework', requireAuth, requireAdmin, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  const classId = typeof req.body?.classId === 'string' ? req.body.classId.trim() : '';
+  const textbookId = typeof req.body?.textbookId === 'string' ? req.body.textbookId.trim() : '';
+  const unitId = typeof req.body?.unitId === 'string' ? req.body.unitId.trim() : '';
+  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+  const dueAt = typeof req.body?.dueAt === 'string' && req.body.dueAt.trim() ? req.body.dueAt.trim() : null;
+
+  if (!classId || !textbookId || !unitId) {
+    res.status(400).json({ error: '缺少班级、教材或单元标识' });
+    return;
+  }
+  if (!title) {
+    res.status(400).json({ error: '请填写作业标题' });
+    return;
+  }
+  if (title.length > 60) {
+    res.status(400).json({ error: '作业标题不能超过 60 个字' });
+    return;
+  }
+
+  const taskKeys = normalizeHomeworkTaskKeys(req.body?.taskKeys);
+  if (!taskKeys || taskKeys.length === 0) {
+    res.status(400).json({ error: '任务类型不合法，请至少选择一个有效任务' });
+    return;
+  }
+
+  const classes = await listClasses();
+  if (!classes.some((item) => item.id === classId)) {
+    res.status(404).json({ error: '班级不存在' });
+    return;
+  }
+
+  const assignment = await createHomework({
+    classId,
+    textbookId,
+    unitId,
+    title,
+    taskKeys,
+    dueAt,
+    createdBy: user.id,
+  });
+  res.status(201).json({ assignment });
+});
+
+app.delete('/api/homework', requireAuth, requireAdmin, async (req, res) => {
+  const id = typeof req.query?.id === 'string' ? req.query.id.trim() : '';
+  if (!id) {
+    res.status(400).json({ error: '缺少作业标识' });
+    return;
+  }
+
+  const ok = await deleteHomework(id);
+  if (!ok) {
+    res.status(404).json({ error: '作业不存在' });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 app.post('/api/ai/chat', requireAuth, async (req, res) => {

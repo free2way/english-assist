@@ -56,6 +56,12 @@ import {
 import { cn } from './lib/utils';
 import { TextbookModule } from './components/textbook/TextbookModule';
 import {
+  getHomeworkTaskLabel,
+  getNextHomeworkTask,
+  isHomeworkOverdue,
+  type StudentHomeworkItem,
+} from './components/textbook/homework';
+import {
   addDays,
   calculateTextSimilarity,
   createTaskId,
@@ -1653,6 +1659,112 @@ const AgentOrchestrationPanel = ({
 
 // --- Views ---
 
+interface HomeworkCardProps {
+  items: StudentHomeworkItem[];
+  currentTextbookId: string;
+  getUnitLabel: (unitId: string) => string;
+  onOpenTask: (stage: LessonStageKey) => void;
+  onSwitchTextbook: (textbookId: string) => void;
+  onRefresh: () => void;
+}
+
+const HomeworkCard = ({
+  items,
+  currentTextbookId,
+  getUnitLabel,
+  onOpenTask,
+  onSwitchTextbook,
+  onRefresh,
+}: HomeworkCardProps) => {
+  if (items.length === 0) return null;
+  const pending = items.filter((item) => !item.completed);
+
+  return (
+    <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
+        <div>
+          <p className="text-xs font-bold text-rose-500 uppercase tracking-[0.3em]">Homework</p>
+          <h2 className="text-2xl font-black text-slate-800 mt-2">老师布置的作业</h2>
+          <p className="text-sm text-slate-500 mt-1">
+            {pending.length > 0 ? `还有 ${pending.length} 项没有完成` : '全部已完成，继续保持'}
+          </p>
+        </div>
+        <button onClick={onRefresh} className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-sm font-bold">
+          刷新
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {items.map((item) => {
+          const overdue = isHomeworkOverdue(item);
+          const nextTask = getNextHomeworkTask(item);
+          const otherTextbook = Boolean(currentTextbookId) && item.textbookId !== currentTextbookId;
+          return (
+            <div
+              key={item.id}
+              className={cn(
+                'rounded-2xl border p-4',
+                item.completed
+                  ? 'border-emerald-100 bg-emerald-50/50'
+                  : overdue
+                    ? 'border-rose-100 bg-rose-50/50'
+                    : 'border-slate-100 bg-slate-50',
+              )}
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <div className="font-bold text-slate-800">{item.title}</div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {item.className} · {getUnitLabel(item.unitId)}
+                  </div>
+                  {item.dueAt && (
+                    <div className={cn('text-xs mt-1 font-bold', overdue ? 'text-rose-500' : 'text-slate-400')}>
+                      截止 {item.dueAt}
+                      {overdue ? ' · 已逾期' : ''}
+                    </div>
+                  )}
+                </div>
+                {item.completed ? (
+                  <span className="px-3 py-2 rounded-2xl bg-emerald-100 text-emerald-700 text-xs font-bold">已完成</span>
+                ) : otherTextbook ? (
+                  <button
+                    onClick={() => onSwitchTextbook(item.textbookId)}
+                    className="px-4 py-2 rounded-2xl bg-slate-800 text-white text-xs font-bold"
+                  >
+                    切换到对应教材
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => nextTask && onOpenTask(nextTask)}
+                    disabled={!nextTask}
+                    className="px-4 py-2 rounded-2xl blue-gradient text-white text-xs font-bold shadow-lg shadow-blue-100 disabled:opacity-50"
+                  >
+                    去完成
+                  </button>
+                )}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {item.taskKeys.map((key) => (
+                  <span
+                    key={key}
+                    className={cn(
+                      'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs',
+                      item.tasks[key] ? 'bg-emerald-100 text-emerald-700' : 'bg-white border border-slate-100 text-slate-500',
+                    )}
+                  >
+                    {item.tasks[key] ? <Check size={12} /> : null}
+                    {getHomeworkTaskLabel(key)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const Dashboard = ({
   currentUser,
   currentUnit,
@@ -3080,9 +3192,37 @@ export default function App() {
   const studyStateRef = useRef<StudyState>(studyState);
   const baselineStateRef = useRef<string>('');
   const [remoteSynced, setRemoteSynced] = useState(false);
+  const [studentHomework, setStudentHomework] = useState<StudentHomeworkItem[]>([]);
   const pushStudyStateRef = useRef<(() => Promise<void>) | null>(null);
   const [retryTarget, setRetryTarget] = useState<MistakeRecord | null>(null);
   const requestSpeechToken = () => apiFetch<SpeechTokenResponse>('/api/speech-token');
+
+  const loadStudentHomework = useCallback(async () => {
+    if (!currentUser || currentUser.role === 'admin') {
+      setStudentHomework([]);
+      return;
+    }
+    try {
+      const data = await apiFetch<{ assignments: StudentHomeworkItem[] }>('/api/homework');
+      setStudentHomework(Array.isArray(data.assignments) ? data.assignments : []);
+    } catch {
+      // Homework is only available when the backend exposes it; keep the
+      // dashboard usable (and quiet) on older deployments.
+      setStudentHomework([]);
+    }
+  }, [apiFetch, currentUser?.username, currentUser?.role]);
+
+  useEffect(() => {
+    void loadStudentHomework();
+  }, [loadStudentHomework]);
+
+  // A tab can outlive the session that opened it (admin logs out, student logs
+  // in) - never leave a non-admin sitting on the management screen.
+  useEffect(() => {
+    if (currentUser && currentUser.role !== 'admin' && activeTab === 'manage') {
+      setActiveTab('dashboard');
+    }
+  }, [currentUser?.role, activeTab]);
 
   useEffect(() => {
     const restoreSession = async () => {
@@ -3185,6 +3325,9 @@ export default function App() {
   }, [currentUser?.username, selectedTextbookId]);
 
   const availableUnits = buildUnitBundlesFromTextbook(selectedTextbook);
+  // The previous textbook's content stays in state while the next one loads, so
+  // unit ids and study state must not be derived until they actually match.
+  const textbookContentReady = Boolean(selectedTextbook && selectedTextbook.id === selectedTextbookId);
   const currentUnit = availableUnits.find((unit) => unit.id === studyState.currentUnitId) || availableUnits[0] || null;
   const agentOrchestration = buildAgentOrchestration(currentUnit, studyState);
 
@@ -3194,6 +3337,7 @@ export default function App() {
       baselineStateRef.current = '';
       return;
     }
+    if (!textbookContentReady) return;
     const raw = localStorage.getItem(getStudyStorageKey(currentUser.username, selectedTextbookId));
     let loaded = createInitialStudyState(availableUnits);
     try {
@@ -3205,13 +3349,13 @@ export default function App() {
     baselineStateRef.current = JSON.stringify(loaded);
     studyStateRef.current = loaded;
     setStudyState(loaded);
-  }, [currentUser?.username, selectedTextbookId, availableUnits.length]);
+  }, [currentUser?.username, selectedTextbookId, availableUnits.length, textbookContentReady]);
 
   // ------------------------------------------------------------------ sync
   // Pull the server snapshot once per (user, textbook); whichever side carries
   // the newer timestamp wins, then local edits are pushed back with debounce.
   useEffect(() => {
-    if (!currentUser || !selectedTextbookId) {
+    if (!currentUser || !selectedTextbookId || !textbookContentReady) {
       setRemoteSynced(false);
       return;
     }
@@ -3254,7 +3398,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser?.username, selectedTextbookId, availableUnits.length]);
+  }, [currentUser?.username, selectedTextbookId, availableUnits.length, textbookContentReady]);
 
   useEffect(() => {
     if (!remoteSynced || !currentUser || !selectedTextbookId) return;
@@ -3278,6 +3422,9 @@ export default function App() {
         body: JSON.stringify({ textbookId, state: studyStateRef.current, updatedAt }),
       });
       localStorage.setItem(getStudyUpdatedAtKey(user.username, textbookId), updatedAt);
+      // Completion of an assigned task is derived from the pushed state, so
+      // refresh the homework card right after a successful upload.
+      void loadStudentHomework();
     } catch (error) {
       console.warn('[study] 学习进度同步失败，本地数据仍然保留', error);
     }
@@ -3878,17 +4025,30 @@ export default function App() {
                   )}
                 </div>
               ) : activeTab === 'dashboard' && (
-                <Dashboard
-                  currentUser={currentUser}
-                  currentUnit={currentUnit}
-                  studyState={studyState}
-                  orchestration={agentOrchestration}
-                  onSelectStage={handleSelectStage}
-                  onOpenStage={handleOpenStage}
-                  onOpenChallenge={handleOpenChallenge}
-                  onCheckInToday={handleCheckInToday}
-                  onCompleteRecommendation={handleCompleteRecommendation}
-                />
+                <>
+                  <HomeworkCard
+                    items={studentHomework}
+                    currentTextbookId={selectedTextbookId}
+                    getUnitLabel={(unitId) => {
+                      const unit = availableUnits.find((item) => item.id === unitId);
+                      return unit ? `${unit.unit} ${unit.title}`.trim() : unitId;
+                    }}
+                    onOpenTask={handleOpenStage}
+                    onSwitchTextbook={handleSelectedTextbookChange}
+                    onRefresh={() => void loadStudentHomework()}
+                  />
+                  <Dashboard
+                    currentUser={currentUser}
+                    currentUnit={currentUnit}
+                    studyState={studyState}
+                    orchestration={agentOrchestration}
+                    onSelectStage={handleSelectStage}
+                    onOpenStage={handleOpenStage}
+                    onOpenChallenge={handleOpenChallenge}
+                    onCheckInToday={handleCheckInToday}
+                    onCompleteRecommendation={handleCompleteRecommendation}
+                  />
+                </>
               )}
               {(activeTab === 'textbook-overview' ||
                 activeTab === 'textbook-preview' ||

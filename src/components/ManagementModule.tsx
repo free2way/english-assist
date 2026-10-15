@@ -18,6 +18,7 @@ import {
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { cn } from '../lib/utils';
+import { ClassHomeworkModule } from './ClassHomeworkModule';
 import type {
   AIConfig,
   AppUser,
@@ -543,6 +544,13 @@ export function ManagementModule({
           )}
         </div>
       </div>
+
+      <ClassHomeworkModule
+        apiFetch={apiFetch}
+        users={users}
+        textbooks={textbooks}
+        textbookContents={textbookContents}
+      />
 
       <div className="grid grid-cols-1 2xl:grid-cols-2 gap-8">
         <div className="space-y-6">
