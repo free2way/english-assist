@@ -60,14 +60,25 @@ export function Statistics({
     : 0;
 
   const dictationAttempts = (unit
-    ? studyState.dictationAttempts.filter((attempt) => attempt.unitId === unit.id)
-    : studyState.dictationAttempts).slice(0, 5);
+    ? studyState.dictationAttempts.filter((attempt) => attempt.unitId === unit.id && attempt.mode !== 'listening')
+    : studyState.dictationAttempts.filter((attempt) => attempt.mode !== 'listening')).slice(0, 5);
   const dictationTotals = dictationAttempts.reduce(
     (acc, attempt) => ({ correct: acc.correct + attempt.correct, total: acc.total + attempt.total }),
     { correct: 0, total: 0 },
   );
   const dictationAccuracy = dictationTotals.total > 0
     ? Math.round((dictationTotals.correct / dictationTotals.total) * 100)
+    : null;
+
+  const listeningAttempts = (unit
+    ? studyState.dictationAttempts.filter((attempt) => attempt.unitId === unit.id && attempt.mode === 'listening')
+    : studyState.dictationAttempts.filter((attempt) => attempt.mode === 'listening')).slice(0, 5);
+  const listeningTotals = listeningAttempts.reduce(
+    (acc, attempt) => ({ correct: acc.correct + attempt.correct, total: acc.total + attempt.total }),
+    { correct: 0, total: 0 },
+  );
+  const listeningAccuracy = listeningTotals.total > 0
+    ? Math.round((listeningTotals.correct / listeningTotals.total) * 100)
     : null;
 
   const challengeAttempts = unit
@@ -144,6 +155,11 @@ export function Statistics({
               label="听写正确率"
               value={dictationAccuracy === null ? '--' : `${dictationAccuracy}%`}
               colorClass="text-emerald-500"
+            />
+            <StatCard
+              label="听力正确率"
+              value={listeningAccuracy === null ? '--' : `${listeningAccuracy}%`}
+              colorClass="text-sky-500"
             />
             <StatCard
               label="最近闯关"

@@ -67,6 +67,7 @@ interface ManagementModuleProps {
   buildUnitBundlesFromTextbook: (textbook: TextbookContent | null) => UnitBundle[];
   loadStudyStateForUser: (username: string, textbookId: string, units: UnitBundle[]) => StudyState;
   createInitialStudyState: (units: UnitBundle[]) => StudyState;
+  normalizeStudyState: (raw: Partial<StudyState> | null, units: UnitBundle[]) => StudyState;
   getUnitChallengeStatus: (unit: UnitBundle | null, studyState: StudyState) => ChallengeStatus;
   getCheckinStreak: (dailyCheckins: StudyState['dailyCheckins']) => number;
   buildSevenDayTrend: (dailyCheckins: StudyState['dailyCheckins']) => SevenDayTrendPoint[];
@@ -85,6 +86,7 @@ export function ManagementModule({
   buildUnitBundlesFromTextbook,
   loadStudyStateForUser,
   createInitialStudyState,
+  normalizeStudyState,
   getUnitChallengeStatus,
   getCheckinStreak,
   buildSevenDayTrend,
@@ -110,12 +112,44 @@ export function ManagementModule({
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
   const [userError, setUserError] = useState('');
   const [isLoadingUsers, setIsLoadingUsers] = useState(true);
+  const [remoteStates, setRemoteStates] = useState<Record<string, { state: StudyState; updatedAt: string }>>({});
+  const [remoteStatesError, setRemoteStatesError] = useState('');
+
+  // Teacher dashboards must read server-side study states: reading the admin's
+  // own localStorage only ever showed data from a single browser.
+  const loadRemoteStates = useCallback(async () => {
+    try {
+      const data = await apiFetch<{
+        states: Array<{ username: string; textbookId: string; state: unknown; updatedAt: string }>;
+      }>('/api/admin/study-states');
+      const map: Record<string, { state: StudyState; updatedAt: string }> = {};
+      data.states.forEach((row) => {
+        if (!row?.username || !row?.textbookId || !row.state || typeof row.state !== 'object') return;
+        map[`${row.username}:${row.textbookId}`] = {
+          state: row.state as StudyState,
+          updatedAt: row.updatedAt,
+        };
+      });
+      setRemoteStates(map);
+      setRemoteStatesError('');
+    } catch (error) {
+      setRemoteStatesError(error instanceof Error ? error.message : '学习数据读取失败');
+      setRemoteStates({});
+    }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    void loadRemoteStates();
+  }, [loadRemoteStates, users.length]);
 
   const classSnapshots: ClassSnapshot[] = users.map((user) => {
     const matchedTextbook = textbooks.find((item) => item.grade === user.grade && item.semester === user.semester) || textbooks[0];
     const textbookContent = matchedTextbook ? textbookContents[matchedTextbook.id] : undefined;
     const units = buildUnitBundlesFromTextbook(textbookContent || null);
-    const state = matchedTextbook ? loadStudyStateForUser(user.username, matchedTextbook.id, units) : createInitialStudyState(units);
+    const remote = matchedTextbook ? remoteStates[`${user.username}:${matchedTextbook.id}`] : undefined;
+    const state = matchedTextbook
+      ? (remote ? normalizeStudyState(remote.state, units) : loadStudyStateForUser(user.username, matchedTextbook.id, units))
+      : createInitialStudyState(units);
     const currentUnit = units.find((unit) => unit.id === state.currentUnitId) || units[0] || null;
     const challenge = getUnitChallengeStatus(currentUnit, state);
     const agentInsight = buildAgentOrchestration(currentUnit, state).teacherInsight;

@@ -246,7 +246,100 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_textbook_sentences_unit_id ON textbook_sentences(unit_id)`,
   `CREATE INDEX IF NOT EXISTS idx_textbook_phrases_unit_id ON textbook_phrases(unit_id)`,
   `CREATE INDEX IF NOT EXISTS idx_textbook_patterns_unit_id ON textbook_patterns(unit_id)`,
+  // Server-side study state (per user + textbook). The browser keeps a copy for
+  // offline use; this table is what makes teacher dashboards and cross-device
+  // progress possible.
+  `CREATE TABLE IF NOT EXISTS study_states (
+      user_id TEXT NOT NULL,
+      textbook_id TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, textbook_id)
+    )`,
+  `CREATE INDEX IF NOT EXISTS idx_study_states_textbook_id ON study_states(textbook_id)`,
 ];
+
+export interface StudyStateRecord {
+  userId: string;
+  username: string;
+  grade: string;
+  semester: string;
+  school: string;
+  textbookId: string;
+  state: unknown;
+  updatedAt: string;
+}
+
+export const getStudyState = async (userId: string, textbookId: string) => {
+  await initializeDatabase();
+  const row = await queryFirst<{ state_json: string; updated_at: string }>(
+    'SELECT state_json, updated_at FROM study_states WHERE user_id = ? AND textbook_id = ?',
+    [userId, textbookId]
+  );
+  if (!row) return null;
+  try {
+    return { state: JSON.parse(row.state_json), updatedAt: row.updated_at };
+  } catch {
+    return null;
+  }
+};
+
+export const upsertStudyState = async (userId: string, textbookId: string, state: unknown, updatedAt: string) => {
+  await initializeDatabase();
+  await executeStatement(
+    `
+      INSERT INTO study_states (user_id, textbook_id, state_json, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, textbook_id) DO UPDATE SET
+        state_json = excluded.state_json,
+        updated_at = excluded.updated_at
+    `,
+    [userId, textbookId, JSON.stringify(state ?? {}), updatedAt]
+  );
+  return { updatedAt };
+};
+
+export const listStudyStates = async (): Promise<StudyStateRecord[]> => {
+  await initializeDatabase();
+  const rows = await queryAll<{
+    user_id: string;
+    username: string;
+    grade: string;
+    semester: string;
+    school: string;
+    textbook_id: string;
+    state_json: string;
+    updated_at: string;
+  }>(
+    `
+      SELECT s.user_id, u.username, u.grade, u.semester, u.school, s.textbook_id, s.state_json, s.updated_at
+      FROM study_states s
+      JOIN users u ON u.id = s.user_id
+      WHERE u.role != 'admin'
+      ORDER BY s.updated_at DESC
+      LIMIT 500
+    `
+  );
+
+  return rows.map((row) => {
+    let state: unknown = null;
+    try {
+      state = JSON.parse(row.state_json);
+    } catch {
+      state = null;
+    }
+    return {
+      userId: row.user_id,
+      username: row.username,
+      grade: row.grade,
+      semester: row.semester,
+      school: row.school,
+      textbookId: row.textbook_id,
+      state,
+      updatedAt: row.updated_at,
+    };
+  });
+};
 
 let initializationPromise: Promise<void> | null = null;
 

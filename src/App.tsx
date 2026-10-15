@@ -41,6 +41,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { ChallengeModule } from './components/ChallengeModule';
 import { DictationModule } from './components/DictationModule';
+import { ListeningModule } from './components/ListeningModule';
 import { ManagementModule } from './components/ManagementModule';
 import { StatCard } from './components/StatCard';
 import { Statistics } from './components/Statistics';
@@ -214,6 +215,7 @@ type AppTabKey =
   | 'textbook-grammar'
   | 'textbook-reading'
   | 'dictation'
+  | 'listening'
   | 'tutor'
   | 'stats'
   | 'profile'
@@ -361,7 +363,7 @@ interface ChallengeAttempt {
 interface DictationAttempt {
   id: string;
   unitId: string;
-  mode: 'word' | 'sentence';
+  mode: 'word' | 'sentence' | 'listening';
   correct: number;
   total: number;
   completedAt: string;
@@ -482,6 +484,18 @@ const UNIT_TITLE_MAP: Record<string, string> = {
 };
 
 const getStudyStorageKey = (username: string, textbookId: string) => `${STUDY_STATE_STORAGE_PREFIX}:${username}:${textbookId}`;
+const getStudyUpdatedAtKey = (username: string, textbookId: string) => `ace_study_state_updated_at:${username}:${textbookId}`;
+
+/** A snapshot with no learning data at all - never let it win over the server. */
+const isStudyStateEmpty = (state: StudyState) =>
+  state.completedTaskIds.length === 0
+  && state.masteredWordIds.length === 0
+  && state.followedSentenceIds.length === 0
+  && state.completedGrammarQuestionIds.length === 0
+  && state.mistakes.length === 0
+  && state.pronunciationAssessments.length === 0
+  && state.dictationAttempts.length === 0
+  && state.challengeAttempts.length === 0;
 const getSelectedTextbookStorageKey = (username: string) => `ace_selected_textbook:${username}`;
 
 const buildGrammarExamples = (
@@ -1961,15 +1975,37 @@ const getBaseUrl = (url?: string) => {
   return baseUrl.replace(/\/+$/, '');
 };
 
+interface ChatCorrection {
+  original: string;
+  corrected: string;
+  reason: string;
+}
+
+interface ChatReply {
+  message: string;
+  followUp?: string;
+  corrections: ChatCorrection[];
+}
+
 const generateChatResponse = async (
   userText: string,
   authenticatedFetch: <T,>(path: string, init?: RequestInit) => Promise<T>,
-): Promise<string> => {
-  const data = await authenticatedFetch<{ message: string }>('/api/ai/chat', {
+  options: { corrections?: boolean; context?: string; task?: string } = {},
+): Promise<ChatReply> => {
+  const data = await authenticatedFetch<{ message: string; followUp?: string; corrections?: ChatCorrection[] }>('/api/ai/chat', {
     method: 'POST',
-    body: JSON.stringify({ message: userText }),
+    body: JSON.stringify({
+      message: userText,
+      corrections: options.corrections === true,
+      context: options.context,
+      task: options.task,
+    }),
   });
-  return data.message;
+  return {
+    message: data.message,
+    followUp: data.followUp,
+    corrections: Array.isArray(data.corrections) ? data.corrections : [],
+  };
 };
 
 const generateTTS = async (text: string, accent: 'US' | 'UK'): Promise<boolean> => {
@@ -2122,7 +2158,7 @@ const AITutor = ({
       }
     : getSpeakingCoachConfig(currentUnit);
   const starterQuestion = coachConfig.intro;
-  const [messages, setMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'ai'; text: string; corrections?: ChatCorrection[] }>>([
     { role: 'ai', text: starterQuestion }
   ]);
   const [inputValue, setInputValue] = useState('');
@@ -2139,6 +2175,7 @@ const AITutor = ({
   const [speakingAssessmentText, setSpeakingAssessmentText] = useState('');
   const [isAssessingSpeaking, setIsAssessingSpeaking] = useState(false);
   const [isPreparingSpeaking, setIsPreparingSpeaking] = useState(false);
+  const [targetSentenceIndex, setTargetSentenceIndex] = useState(0);
   const [speakingAssessmentError, setSpeakingAssessmentError] = useState('');
   const speakingSessionRef = useRef<Awaited<ReturnType<typeof startPronunciationAssessmentSession>> | null>(null);
   const speakingStreamRef = useRef<MediaStream | null>(null);
@@ -2157,6 +2194,7 @@ const AITutor = ({
     speakingStreamRef.current = null;
     setIsAssessingSpeaking(false);
     setIsPreparingSpeaking(false);
+    setTargetSentenceIndex(0);
   }, [starterQuestion]);
 
   // Warm up the SDK chunk and the Azure token while the student is chatting.
@@ -2189,9 +2227,14 @@ const AITutor = ({
   }, [messages]);
 
   const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.text || '';
+  const targetSentence = tutorMode === 'unit' && currentUnit
+    ? (currentUnit.sentences[targetSentenceIndex]?.text || currentUnit.sentences[0]?.text || '')
+    : '';
 
   const handleAssessSpeaking = async () => {
-    const referenceText = inputValue.trim() || latestUserMessage.trim();
+    // Text-book mode assesses the lesson sentence, not whatever the student
+    // happened to type - otherwise "评分" is just self-repetition.
+    const referenceText = targetSentence.trim() || inputValue.trim() || latestUserMessage.trim();
     if (!referenceText) {
       setSpeakingAssessmentError('先输入一句话，或先完成一次语音表达，再进行 Azure 口语评测。');
       return;
@@ -2297,17 +2340,41 @@ const AITutor = ({
           hint: feedback.hint,
         });
       }
-      const lessonPrompt = tutorMode === 'free-talk'
-        ? `You are a friendly English speaking partner for a middle or high school student. Keep the conversation natural, encouraging, and short. Ask one follow-up question at a time. Student says: ${userText}`
+      const lessonContext = tutorMode === 'free-talk'
+        ? 'Free talk practice with a middle school student.'
         : currentUnit
-          ? `You are the Speaking Coach Agent in a multi-agent English learning system. Current orchestration goal: ${activeSpeakingPlan?.rationale || coachConfig.goal}. Unit: "${currentUnit.title}". Goal: ${coachConfig.goal}. Ask short follow-up questions and help the student answer more naturally. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}. Student response: ${userText}`
-          : userText;
-      const aiResponse = await generateChatResponse(lessonPrompt, apiFetch);
-      setMessages(prev => [...prev, { role: 'ai', text: aiResponse }]);
+          ? `Unit "${currentUnit.title}". Goal: ${coachConfig.goal}. Key sentences: ${currentUnit.sentences.slice(0, 4).map((item) => item.text).join(' ')}`
+          : '';
+      const aiResponse = await generateChatResponse(userText, apiFetch, {
+        corrections: true,
+        context: lessonContext,
+      });
+      const corrections = aiResponse.corrections;
+      setMessages(prev => [...prev, {
+        role: 'ai',
+        text: aiResponse.followUp ? `${aiResponse.message}\n\n${aiResponse.followUp}` : aiResponse.message,
+        corrections,
+      }]);
       onCompleteStage('speaking');
-      
+
+      // Corrections land in the mistake book so the review pack can re-ask them.
+      if (currentUnit && corrections.length > 0) {
+        corrections.forEach((item) => {
+          onAddMistake({
+            unitId: currentUnit.id,
+            category: 'speaking',
+            stage: 'speaking',
+            prompt: `口语纠错：${item.original}`,
+            expected: item.corrected,
+            answer: item.original,
+            reason: 'grammar_rule',
+            hint: item.reason || 'AI 外教指出这处表达可以更地道。',
+          });
+        });
+      }
+
       // Auto-speak the AI response
-      speakText(aiResponse, messages.length + 1);
+      speakText(aiResponse.followUp ? `${aiResponse.message} ${aiResponse.followUp}` : aiResponse.message, messages.length + 1);
     } catch (error: any) {
       setMessages(prev => [...prev, { role: 'ai', text: `Error: ${error.message || 'Something went wrong'}` }]);
     } finally {
@@ -2417,6 +2484,19 @@ const AITutor = ({
         )}
 
         <div className="flex flex-wrap gap-3 mb-5">
+          {tutorMode === 'unit' && currentUnit && currentUnit.sentences.length > 1 && (
+            <select
+              value={targetSentenceIndex}
+              onChange={(e) => setTargetSentenceIndex(Number(e.target.value))}
+              className="px-3 py-2 rounded-2xl bg-slate-50 border border-slate-100 text-xs font-bold text-slate-600 outline-none"
+            >
+              {currentUnit.sentences.map((sentence, index) => (
+                <option key={sentence.id} value={index}>
+                  目标句 {index + 1}：{sentence.text.slice(0, 24)}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             onClick={handleAssessSpeaking}
             disabled={isPreparingSpeaking}
@@ -2436,7 +2516,11 @@ const AITutor = ({
                 : '开始 Azure 口语评测'}
           </button>
           <div className="text-xs text-slate-400 self-center">
-            {tutorMode === 'free-talk' ? '会按当前输入或最近一句自由表达做发音评测。' : '会按当前输入或最近一句教材表达做发音评测。'}
+            {tutorMode === 'free-talk'
+              ? '会按当前输入或最近一句自由表达做发音评测。'
+              : targetSentence
+                ? `评测目标句：${targetSentence}`
+                : '会按当前输入或最近一句教材表达做发音评测。'}
           </div>
         </div>
 
@@ -2548,6 +2632,19 @@ const AITutor = ({
                     <Markdown>{msg.text}</Markdown>
                   </div>
                 </div>
+                {msg.role === 'ai' && msg.corrections && msg.corrections.length > 0 && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 space-y-2">
+                    <div className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">AI 纠错（已写入错题本）</div>
+                    {msg.corrections.map((item, correctionIndex) => (
+                      <div key={`${item.original}-${correctionIndex}`} className="text-xs text-amber-800">
+                        <span className="line-through text-rose-600">{item.original}</span>
+                        <span className="mx-1">→</span>
+                        <span className="font-bold">{item.corrected}</span>
+                        {item.reason && <div className="text-[11px] text-amber-600 mt-0.5">{item.reason}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {msg.role === 'ai' && (
                   <button 
                     onClick={() => speakText(msg.text, idx)}
@@ -2611,20 +2708,51 @@ const AITutor = ({
 
       {/* Scaffolding Tools */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all">
-          <div className="text-[10px] text-slate-400 mb-1">关键词提示</div>
+        <button
+          onClick={() => {
+            const words = (currentUnit?.vocab || []).slice(0, 5).map((item) => item.word);
+            setInputValue(words.length > 0 ? `I want to talk about ${words.join(', ')}. ` : 'My school and my family. ');
+          }}
+          className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all"
+        >
+          <div className="text-[10px] text-slate-400 mb-1">关键词提示（点一下插入输入框）</div>
           <div className="text-xs font-bold text-blue-600">
             {currentUnit?.vocab.slice(0, 2).map((item) => item.word).join(', ') || 'school, family'}
           </div>
         </button>
-        <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all">
-          <div className="text-[10px] text-slate-400 mb-1">句式模板</div>
+        <button
+          onClick={() => {
+            const template = currentUnit?.patterns?.[0]?.text || currentUnit?.sentences[0]?.text;
+            setInputValue(template ? `${template} ` : 'I think ... because ... ');
+          }}
+          className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all"
+        >
+          <div className="text-[10px] text-slate-400 mb-1">句式模板（点一下插入输入框）</div>
           <div className="text-xs font-bold text-purple-600">
             {currentUnit?.sentences[0]?.text || 'I think... because...'}
           </div>
         </button>
-        <button className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all">
-          <div className="text-[10px] text-slate-400 mb-1">参考范文</div>
+        <button
+          onClick={async () => {
+            if (isLoading) return;
+            setIsLoading(true);
+            try {
+              const answer = await generateChatResponse(
+                `请围绕 "${coachConfig.goal}" 给出一段 2-4 句的英文示范回答，面向初中生，用词简单。`,
+                apiFetch,
+                { corrections: true, task: 'model-answer', context: tutorMode === 'unit' && currentUnit ? `Unit "${currentUnit.title}"` : '' },
+              );
+              setMessages(prev => [...prev, { role: 'ai', text: `参考范文：${answer.message}` }]);
+              speakText(answer.message, messages.length + 1);
+            } catch (error: any) {
+              setMessages(prev => [...prev, { role: 'ai', text: `参考范文生成失败：${error?.message || '请稍后再试'}` }]);
+            } finally {
+              setIsLoading(false);
+            }
+          }}
+          className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center hover:bg-slate-50 transition-all"
+        >
+          <div className="text-[10px] text-slate-400 mb-1">参考范文（点一下让 AI 生成）</div>
           <div className="text-xs font-bold text-emerald-600">{currentUnit?.title || 'My School Life'}</div>
         </button>
       </div>
@@ -2949,6 +3077,10 @@ export default function App() {
   const [selectedTextbook, setSelectedTextbook] = useState<TextbookContent | null>(null);
   const [textbookError, setTextbookError] = useState('');
   const [studyState, setStudyState] = useState<StudyState>(createInitialStudyState([]));
+  const studyStateRef = useRef<StudyState>(studyState);
+  const baselineStateRef = useRef<string>('');
+  const [remoteSynced, setRemoteSynced] = useState(false);
+  const pushStudyStateRef = useRef<(() => Promise<void>) | null>(null);
   const [retryTarget, setRetryTarget] = useState<MistakeRecord | null>(null);
   const requestSpeechToken = () => apiFetch<SpeechTokenResponse>('/api/speech-token');
 
@@ -3059,20 +3191,110 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !selectedTextbookId) {
       setStudyState(createInitialStudyState([]));
+      baselineStateRef.current = '';
       return;
     }
     const raw = localStorage.getItem(getStudyStorageKey(currentUser.username, selectedTextbookId));
+    let loaded = createInitialStudyState(availableUnits);
     try {
       const parsed = raw ? JSON.parse(raw) as Partial<StudyState> : null;
-      setStudyState(normalizeStudyState(parsed, availableUnits));
+      loaded = normalizeStudyState(parsed, availableUnits);
     } catch (error) {
-      setStudyState(createInitialStudyState(availableUnits));
+      loaded = createInitialStudyState(availableUnits);
     }
+    baselineStateRef.current = JSON.stringify(loaded);
+    studyStateRef.current = loaded;
+    setStudyState(loaded);
+  }, [currentUser?.username, selectedTextbookId, availableUnits.length]);
+
+  // ------------------------------------------------------------------ sync
+  // Pull the server snapshot once per (user, textbook); whichever side carries
+  // the newer timestamp wins, then local edits are pushed back with debounce.
+  useEffect(() => {
+    if (!currentUser || !selectedTextbookId) {
+      setRemoteSynced(false);
+      return;
+    }
+    let cancelled = false;
+    setRemoteSynced(false);
+
+    (async () => {
+      try {
+        const data = await apiFetch<{ state: Partial<StudyState> | null; updatedAt: string | null }>(
+          `/api/study/state?textbookId=${encodeURIComponent(selectedTextbookId)}`,
+        );
+        if (cancelled) return;
+
+        const localUpdatedAt = localStorage.getItem(getStudyUpdatedAtKey(currentUser.username, selectedTextbookId));
+        const serverTime = data.updatedAt ? Date.parse(data.updatedAt) : 0;
+        const localTime = localUpdatedAt ? Date.parse(localUpdatedAt) : 0;
+        const localState = studyStateRef.current;
+
+        // An empty local snapshot (fresh device, cleared storage) always yields
+        // to the server; otherwise the most recent edit wins.
+        if (data.state && (isStudyStateEmpty(localState) || serverTime > localTime)) {
+          const restored = normalizeStudyState(data.state, availableUnits);
+          studyStateRef.current = restored;
+          baselineStateRef.current = JSON.stringify(restored);
+          setStudyState(restored);
+          localStorage.setItem(getStudyStorageKey(currentUser.username, selectedTextbookId), JSON.stringify(restored));
+          localStorage.setItem(getStudyUpdatedAtKey(currentUser.username, selectedTextbookId), new Date(serverTime || Date.now()).toISOString());
+          console.info('[study] 已从服务端恢复学习进度');
+        } else if (!isStudyStateEmpty(localState) && localTime > 0) {
+          await pushStudyStateRef.current?.();
+        }
+        if (!cancelled) setRemoteSynced(true);
+      } catch (error) {
+        // Keep remoteSynced false on failure: pushing here could overwrite a
+        // server snapshot we failed to read with (possibly empty) local data.
+        console.warn('[study] 服务端同步不可用，本次会话只使用本地数据', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser?.username, selectedTextbookId, availableUnits.length]);
 
   useEffect(() => {
+    if (!remoteSynced || !currentUser || !selectedTextbookId) return;
+    const timer = setTimeout(() => {
+      void pushStudyStateRef.current?.();
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [studyState, remoteSynced, currentUser?.username, selectedTextbookId]);
+
+  const pushStudyState = async () => {
+    const user = currentUser;
+    const textbookId = selectedTextbookId;
+    if (!user || !textbookId) return;
+    const updatedAt = new Date().toISOString();
+    try {
+      await apiFetch<{ ok: boolean; updatedAt: string }>('/api/study/state', {
+        method: 'PUT',
+        body: JSON.stringify({ textbookId, state: studyStateRef.current, updatedAt }),
+      });
+      localStorage.setItem(getStudyUpdatedAtKey(user.username, textbookId), updatedAt);
+    } catch (error) {
+      console.warn('[study] 学习进度同步失败，本地数据仍然保留', error);
+    }
+  };
+
+  useEffect(() => {
+    pushStudyStateRef.current = pushStudyState;
+  });
+
+  useEffect(() => {
+    studyStateRef.current = studyState;
     if (!currentUser || !selectedTextbookId) return;
-    localStorage.setItem(getStudyStorageKey(currentUser.username, selectedTextbookId), JSON.stringify(studyState));
+    const serialized = JSON.stringify(studyState);
+    localStorage.setItem(getStudyStorageKey(currentUser.username, selectedTextbookId), serialized);
+    // Only stamp "last edited" for real changes: hydration itself (including the
+    // empty initial state) must not look newer than the server snapshot.
+    if (serialized !== baselineStateRef.current && !isStudyStateEmpty(studyState)) {
+      localStorage.setItem(getStudyUpdatedAtKey(currentUser.username, selectedTextbookId), new Date().toISOString());
+      baselineStateRef.current = serialized;
+    }
   }, [studyState, currentUser?.username, selectedTextbookId]);
 
   const handleSelectUnit = (unitId: string) => {
@@ -3276,7 +3498,7 @@ export default function App() {
     );
   };
 
-  const handleDictationAttempt = (attempt: { mode: 'word' | 'sentence'; correct: number; total: number }) => {
+  const handleDictationAttempt = (attempt: { mode: 'word' | 'sentence' | 'listening'; correct: number; total: number }) => {
     if (!currentUnit) return;
     setStudyState((prev) => ({
       ...prev,
@@ -3294,10 +3516,10 @@ export default function App() {
       agentEvents: appendAgentEvent(prev.agentEvents, {
         agent: 'assessment',
         type: 'assessment',
-        title: `听写完成 ${attempt.correct}/${attempt.total}`,
+        title: `${attempt.mode === 'listening' ? '听力训练' : '听写'}完成 ${attempt.correct}/${attempt.total}`,
         detail: attempt.total > 0 && attempt.correct === attempt.total
-          ? '本轮听写全对，评测反馈 Agent 建议进入下一课时。'
-          : '本轮听写有错题，已写入错题本，可按"只练错题"再来一轮。',
+          ? '本轮全部答对，评测反馈 Agent 建议进入下一课时。'
+          : '本轮有错题，已写入错题本，可按"只练错题"再来一轮。',
         unitId: currentUnit.id,
         stage: 'dictation',
       }),
@@ -3448,6 +3670,7 @@ export default function App() {
     { id: 'textbook-grammar', label: '语法', icon: PencilLine },
     { id: 'textbook-reading', label: '朗读评测', icon: Headphones },
     { id: 'dictation', label: '听写', icon: PencilLine },
+    { id: 'listening', label: '听力', icon: Headphones },
     { id: 'tutor', label: 'AI外教', icon: Mic2, primary: true },
     { id: 'stats', label: '统计', icon: BarChart3 },
     { id: 'profile', label: '我的', icon: Settings },
@@ -3700,6 +3923,15 @@ export default function App() {
                   }
                 />
               )}
+              {activeTab === 'listening' && (
+                <ListeningModule
+                  currentUnit={currentUnit}
+                  speak={speakWithAzure}
+                  onAddMistake={handleAddMistake}
+                  onRecordAttempt={handleDictationAttempt}
+                  mistakeReasonLabels={MISTAKE_REASON_LABELS}
+                />
+              )}
               {activeTab === 'dictation' && (
                 <DictationModule
                   currentUnit={currentUnit}
@@ -3771,6 +4003,7 @@ export default function App() {
                   buildUnitBundlesFromTextbook={buildUnitBundlesFromTextbook}
                   loadStudyStateForUser={loadStudyStateForUser}
                   createInitialStudyState={createInitialStudyState}
+                  normalizeStudyState={normalizeStudyState}
                   getUnitChallengeStatus={getUnitChallengeStatus}
                   getCheckinStreak={getCheckinStreak}
                   buildSevenDayTrend={buildSevenDayTrend}

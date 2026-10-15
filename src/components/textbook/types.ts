@@ -207,7 +207,7 @@ export interface MistakeRecord {
 export interface DictationAttempt {
   id: string;
   unitId: string;
-  mode: 'word' | 'sentence';
+  mode: 'word' | 'sentence' | 'listening';
   correct: number;
   total: number;
   completedAt: string;

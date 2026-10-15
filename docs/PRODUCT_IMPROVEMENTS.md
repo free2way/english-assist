@@ -112,4 +112,25 @@ A6（听力专项）→ A7（整篇朗读）→ B2/B3（班级与作业）→ D2
 | E7b 本地日期 | 新增 `toLocalDateKey`/`addDays`，打卡、连续天数、7 天趋势改用本地时区（原来用 UTC，东八区 0-8 点会错位） | 代码层 |
 | E5 最小安全集 | `ADMIN_INITIAL_PASSWORD` 环境变量可覆盖初始管理员口令（默认值仍保留以便本地启动，并在 seed 时打印安全告警）；`/api/auth/login` 增加内存限流（5 分钟窗口 8 次，成功即清零） | 连续 9 次错误密码 → 第 9 次 429 |
 
-仍未做（按本文优先级继续）：A6 听力专项、A7 整篇朗读、A8 AI 外教纠错闭环、B1-B7 数据上云与教师端、C1-C4 激励、E2-E4 工程重构、E6 备份与 migration。
+仍未做（按本文优先级继续）：C1-C4 激励、E2-E4 工程重构、E6 备份与 migration、B2/B3 班级与作业、B6 周报、D2 内容工作流。
+
+---
+
+## 九、已完成（2026-10-11 迭代 2）
+
+| 项 | 实现要点 | 验证 |
+| --- | --- | --- |
+| A8 AI 外教纠错闭环 | `/api/ai/chat` 增加结构化模式（`corrections: true`）：返回 `{message, corrections[], followUp}`，服务端持有提示词、限制 2000 字、30s 超时；前端渲染纠错卡（原句 → 改法 → 原因）并**自动写入错题本**（口语纠错/语法规则）；教材陪练模式下评测参考文本改为**可选的目标句**（顶部下拉选句），不再是学生自己的输入；底部三个脚手架按钮接真实数据（关键词/句式模板插入输入框，参考范文调用 AI 生成并朗读） | mock provider + 浏览器：纠错卡渲染、错题本出现"口语纠错：She go to school every day. → She goes to school every day."、参考范文生成、关键词插入 |
+| A6 听力专项模块 | 新组件 `ListeningModule`：听音辨词（词 → 4 选 1 词义）、听句填词（挖空 + 输入）、听后选义（句子 → 3 选 1 翻译），素材全部来自单元词汇与句型；支持 0.75x 慢速、只练错题、结算页；错题按类型入库（词汇/听写），成绩写 `dictationAttempts(mode:'listening')` | 本地浏览器回归（新导航"听力"） |
+| A7 整篇朗读 | 朗读评测页新增"逐句 / 整篇"切换：整篇模式以课文 `passage`（缺省时拼接重点句）为参考文本一次录音评测，展示总分/准确/流利/完整 + 逐词漏读多读 + 实时识别；结果写入发音评测记录（`sentenceId: <unit>-passage`）并按需生成错题 | 代码 + 构建验证 |
+| B1 学习数据上云 | 服务端新增 `study_states(user_id, textbook_id, state_json, updated_at)` 与三个接口：`GET /api/study/state`、`PUT /api/study/state`（限 200KB）、`GET /api/admin/study-states`；前端按"空本地状态必让位服务端、否则时间戳新者胜"策略同步（1.5s 防抖推送、localStorage 仍作离线缓存、**拉取失败绝不推送**以免用空状态覆盖服务端）；教师看板改为读取服务端快照，本地读取仅作兜底 | 端到端：学生端练习 → 服务端出现快照（错题 3）→ 清空本地模拟换设备 → 重新加载后自动从服务端恢复（控制台 `[study] 已从服务端恢复学习进度`）→ 管理员登录后看板显示该学生错题 3、风险等级与干预建议 |
+
+### 关键接口（供后续开发参考）
+
+```
+GET  /api/study/state?textbookId=xxx      # 学生拉取自己的学习快照（含 updatedAt）
+PUT  /api/study/state                     # { textbookId, state, updatedAt } 上报
+GET  /api/admin/study-states              # 教师/管理员：全体学生的学习快照
+POST /api/ai/chat                         # { message, corrections?, context?, task? }
+                                          # → { message, followUp?, corrections[] }
+```

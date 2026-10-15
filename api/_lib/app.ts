@@ -7,8 +7,11 @@ import {
   deleteSession,
   deleteUser,
   getAIServiceConfig,
+  getStudyState,
   getUserByToken,
   getTextbookContent,
+  listStudyStates,
+  upsertStudyState,
   importAllTextbookSamples,
   importTextbookSample,
   listUsers,
@@ -152,12 +155,93 @@ app.get('/api/speech-token', requireAuth, async (_req, res) => {
   }
 });
 
+const AI_TUTOR_SYSTEM_PROMPT =
+  'You are a friendly English speaking tutor for Chinese middle school students. Keep answers concise, encouraging and useful for oral practice.';
+const AI_COACH_SYSTEM_PROMPT = `${AI_TUTOR_SYSTEM_PROMPT}
+Always answer with STRICT JSON only (no markdown fences, no extra text) in this shape:
+{"reply":"<1-3 short English sentences>","corrections":[{"original":"<the exact problematic phrase from the student>","corrected":"<fixed English>","reason":"<short Chinese reason>"}],"followUp":"<one short English follow-up question>"}
+Rules: at most 2 corrections and only for real grammar / word-choice / tense problems; if the sentence is fine return an empty corrections array; never invent text the student did not write; keep every string short and age-appropriate.`;
+
+const AI_MAX_MESSAGE_LENGTH = 2000;
+
+const extractJsonObject = (raw: string): any | null => {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+};
+
+const normalizeCorrections = (value: unknown) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === 'object')
+    .map((item: any) => ({
+      original: typeof item.original === 'string' ? item.original.trim().slice(0, 300) : '',
+      corrected: typeof item.corrected === 'string' ? item.corrected.trim().slice(0, 300) : '',
+      reason: typeof item.reason === 'string' ? item.reason.trim().slice(0, 300) : '',
+    }))
+    .filter((item) => item.original && item.corrected)
+    .slice(0, 2);
+};
+
+app.get('/api/study/state', requireAuth, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  const textbookId = typeof req.query?.textbookId === 'string' ? req.query.textbookId.trim() : '';
+  if (!textbookId) {
+    res.status(400).json({ error: '缺少 textbookId' });
+    return;
+  }
+
+  const record = await getStudyState(user.id, textbookId);
+  res.json({ state: record?.state ?? null, updatedAt: record?.updatedAt ?? null });
+});
+
+app.put('/api/study/state', requireAuth, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  const textbookId = typeof req.body?.textbookId === 'string' ? req.body.textbookId.trim() : '';
+  const state = req.body?.state;
+  if (!textbookId || typeof state !== 'object' || state === null) {
+    res.status(400).json({ error: '缺少 textbookId 或 state' });
+    return;
+  }
+
+  const serialized = JSON.stringify(state);
+  if (serialized.length > 200_000) {
+    res.status(413).json({ error: '学习数据过大，已拒绝同步' });
+    return;
+  }
+
+  const updatedAt = typeof req.body?.updatedAt === 'string' && req.body.updatedAt
+    ? req.body.updatedAt
+    : new Date().toISOString();
+  const saved = await upsertStudyState(user.id, textbookId, state, updatedAt);
+  res.json({ ok: true, updatedAt: saved.updatedAt });
+});
+
+app.get('/api/admin/study-states', requireAuth, requireAdmin, async (_req, res) => {
+  res.json({ states: await listStudyStates() });
+});
+
 app.post('/api/ai/chat', requireAuth, async (req, res) => {
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
   if (!message) {
     res.status(400).json({ error: '请输入要发送给 AI 的内容' });
     return;
   }
+  if (message.length > AI_MAX_MESSAGE_LENGTH) {
+    res.status(400).json({ error: `单次发送内容过长（上限 ${AI_MAX_MESSAGE_LENGTH} 字）` });
+    return;
+  }
+
+  // Structured mode: the tutor also returns corrections so the client can feed
+  // them into the mistake book instead of leaving the chat without feedback.
+  const wantCorrections = req.body?.corrections === true;
+  const context = typeof req.body?.context === 'string' ? req.body.context.slice(0, 800) : '';
+  const task = typeof req.body?.task === 'string' ? req.body.task.slice(0, 40) : 'chat';
 
   const config = await getAIServiceConfig({ includeSecret: true });
   if (!config.apiKey) {
@@ -165,25 +249,38 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
     return;
   }
 
+  const systemContent = wantCorrections
+    ? task === 'model-answer'
+      ? `${AI_COACH_SYSTEM_PROMPT}
+The student asked for a model answer: put the model answer itself in "reply" (2-4 sentences), leave corrections empty.`
+      : AI_COACH_SYSTEM_PROMPT
+    : AI_TUTOR_SYSTEM_PROMPT;
+
   try {
-    const response = await fetch(`${config.baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are a friendly English speaking tutor for middle school students. Keep answers concise, encouraging, and useful for oral practice.',
-          },
-          { role: 'user', content: message },
-        ],
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    let response: Response;
+    try {
+      response = await fetch(`${config.baseURL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [
+            { role: 'system', content: systemContent },
+            ...(context ? [{ role: 'system', content: `Lesson context: ${context}` }] : []),
+            { role: 'user', content: message },
+          ],
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -199,7 +296,23 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
       return;
     }
 
-    res.json({ message: String(reply) });
+    if (!wantCorrections) {
+      res.json({ message: String(reply) });
+      return;
+    }
+
+    const parsed = extractJsonObject(String(reply));
+    if (!parsed) {
+      // The provider ignored the JSON instruction - degrade to plain chat.
+      res.json({ message: String(reply), corrections: [] });
+      return;
+    }
+
+    res.json({
+      message: typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim() : String(reply),
+      followUp: typeof parsed.followUp === 'string' ? parsed.followUp.trim().slice(0, 300) : '',
+      corrections: normalizeCorrections(parsed.corrections),
+    });
   } catch (error) {
     res.status(502).json({
       error: error instanceof Error ? error.message : 'AI 服务调用失败',

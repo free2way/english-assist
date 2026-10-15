@@ -89,6 +89,13 @@ export function TextbookModule({
   const [activePage, setActivePage] = useState<TextbookPageKey>('overview');
   const [recordingPhase, setRecordingPhase] = useState<'idle' | 'preparing' | 'listening' | 'scoring'>('idle');
   const [interimSentenceText, setInterimSentenceText] = useState('');
+  const [readingMode, setReadingMode] = useState<'sentence' | 'passage'>('sentence');
+  const [passagePhase, setPassagePhase] = useState<'idle' | 'preparing' | 'listening' | 'scoring'>('idle');
+  const [passageInterimText, setPassageInterimText] = useState('');
+  const [passageLevel, setPassageLevel] = useState(0);
+  const [passageAssessment, setPassageAssessment] = useState<AzurePronunciationResult | null>(null);
+  const [passageRecognizedText, setPassageRecognizedText] = useState('');
+  const [passageError, setPassageError] = useState('');
   const [recordingLevel, setRecordingLevel] = useState(0);
   const [recordingQualityWarning, setRecordingQualityWarning] = useState('');
   const [recordedSentenceUrl, setRecordedSentenceUrl] = useState('');
@@ -134,6 +141,12 @@ export function TextbookModule({
     setGrammarDrafts({});
     setGrammarFeedback({});
     setPendingSentenceAssessmentIndex(null);
+    setReadingMode('sentence');
+    setPassagePhase('idle');
+    setPassageAssessment(null);
+    setPassageRecognizedText('');
+    setPassageInterimText('');
+    setPassageError('');
   }, [currentUnit.id, lockedPage]);
 
   useEffect(() => {
@@ -353,6 +366,122 @@ export function TextbookModule({
       setInterimSentenceText('');
       setRecordingPhase('idle');
     }
+  };
+
+  const passageText = (currentUnit.passage || currentUnit.sentences.map((sentence) => sentence.text).join(' ')).trim();
+
+  const startPassageRecording = async () => {
+    if (!passageText) {
+      setPassageError('当前单元还没有可用于整篇朗读的课文。');
+      return;
+    }
+    setPassageAssessment(null);
+    setPassageRecognizedText('');
+    setPassageError('');
+    setPassageInterimText('');
+    setPassagePhase('preparing');
+
+    const runId = recordingRunRef.current + 1;
+    recordingRunRef.current = runId;
+
+    try {
+      const stream = await openMicrophoneStream();
+      if (recordingRunRef.current !== runId) {
+        stopMediaStream(stream);
+        return;
+      }
+      mediaStreamRef.current = stream;
+      const session = await startPronunciationAssessmentSession({
+        getToken: fetchSpeechToken,
+        referenceText: passageText,
+        language: 'en-US',
+        mediaStream: stream,
+        onInterim: (text) => setPassageInterimText(text),
+      });
+      if (recordingRunRef.current !== runId) {
+        session.cancel();
+        stopMediaStream(stream);
+        return;
+      }
+      pronunciationSessionRef.current = session;
+      microphoneMonitorRef.current = monitorMicrophone(stream, (level) => setPassageLevel(level));
+      setPassagePhase('listening');
+    } catch (error) {
+      if (recordingRunRef.current !== runId) return;
+      const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
+      setPassageError(message);
+      pronunciationSessionRef.current?.cancel();
+      pronunciationSessionRef.current = null;
+      releaseRecordingResources();
+      setPassagePhase('idle');
+    }
+  };
+
+  const stopPassageRecording = async () => {
+    const session = pronunciationSessionRef.current;
+    if (!session) {
+      setPassagePhase('idle');
+      return;
+    }
+    setPassagePhase('scoring');
+    const monitor = microphoneMonitorRef.current;
+    monitor?.stop();
+    microphoneMonitorRef.current = null;
+    setPassageLevel(0);
+
+    try {
+      const { recognizedText, assessment, weakWords } = await session.stop();
+      pronunciationSessionRef.current = null;
+      setPassageRecognizedText(recognizedText);
+      setPassageAssessment(assessment);
+      setPassageError('');
+
+      const firstSentence = currentUnit.sentences[0];
+      const missingWords = assessment.words.filter((word) => word.errorType === 'Omission').length;
+      onAddPronunciationAssessment({
+        unitId: currentUnit.id,
+        sentenceId: `${currentUnit.id}-passage`,
+        sentenceText: passageText.slice(0, 80),
+        pronunciationScore: assessment.pronunciationScore,
+        accuracyScore: assessment.accuracyScore,
+        fluencyScore: assessment.fluencyScore,
+        completenessScore: assessment.completenessScore,
+        weakWords,
+      });
+
+      if (assessment.pronunciationScore < 75 || weakWords.length > 0) {
+        onAddMistake({
+          unitId: currentUnit.id,
+          category: 'speaking',
+          stage: 'reading',
+          prompt: `整篇朗读：${currentUnit.unit} 课文`,
+          expected: firstSentence?.text || passageText.slice(0, 60),
+          answer: weakWords.slice(0, 4).join(', ') || `完整度 ${assessment.completenessScore}`,
+          translation: firstSentence?.translation,
+          reason: 'pronunciation',
+          hint: missingWords > 0
+            ? `有 ${missingWords} 个词没读到，先按意群逐句练，再整篇连读。`
+            : (assessment.feedback[1] || assessment.feedback[0]),
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
+      setPassageError(message);
+    } finally {
+      pronunciationSessionRef.current = null;
+      releaseRecordingResources();
+      setPassageInterimText('');
+      setPassagePhase('idle');
+    }
+  };
+
+  const handleTogglePassageRecording = () => {
+    if (passagePhase === 'listening') {
+      void stopPassageRecording();
+      return;
+    }
+    if (passagePhase !== 'idle') return;
+    void startPassageRecording();
   };
 
   const handleAzurePronunciationAssessment = (sentenceOverride?: typeof currentReadingSentence) => {
@@ -607,6 +736,16 @@ export function TextbookModule({
           readingIndex={readingIndex}
           recordingPhase={recordingPhase}
           interimSentenceText={interimSentenceText}
+          readingMode={readingMode}
+          onChangeReadingMode={setReadingMode}
+          passageText={passageText}
+          passagePhase={passagePhase}
+          passageInterimText={passageInterimText}
+          passageLevel={passageLevel}
+          passageAssessment={passageAssessment}
+          passageRecognizedText={passageRecognizedText}
+          passageError={passageError}
+          onTogglePassageRecording={handleTogglePassageRecording}
           recordingLevel={recordingLevel}
           recordingQualityWarning={recordingQualityWarning}
           recordedSentenceUrl={recordedSentenceUrl}
