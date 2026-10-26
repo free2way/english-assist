@@ -56,9 +56,11 @@ import {
 import { cn } from './lib/utils';
 import { TextbookModule } from './components/textbook/TextbookModule';
 import {
+  formatFeedbackTime,
   getHomeworkTaskLabel,
   getNextHomeworkTask,
   isHomeworkOverdue,
+  type StudentFeedbackNote,
   type StudentHomeworkItem,
 } from './components/textbook/homework';
 import {
@@ -1661,6 +1663,7 @@ const AgentOrchestrationPanel = ({
 
 interface HomeworkCardProps {
   items: StudentHomeworkItem[];
+  feedback: StudentFeedbackNote[];
   currentTextbookId: string;
   getUnitLabel: (unitId: string) => string;
   onOpenTask: (stage: LessonStageKey) => void;
@@ -1670,13 +1673,14 @@ interface HomeworkCardProps {
 
 const HomeworkCard = ({
   items,
+  feedback,
   currentTextbookId,
   getUnitLabel,
   onOpenTask,
   onSwitchTextbook,
   onRefresh,
 }: HomeworkCardProps) => {
-  if (items.length === 0) return null;
+  if (items.length === 0 && feedback.length === 0) return null;
   const pending = items.filter((item) => !item.completed);
 
   return (
@@ -1684,15 +1688,36 @@ const HomeworkCard = ({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
         <div>
           <p className="text-xs font-bold text-rose-500 uppercase tracking-[0.3em]">Homework</p>
-          <h2 className="text-2xl font-black text-slate-800 mt-2">老师布置的作业</h2>
+          <p className="text-2xl font-black text-slate-800 mt-2">老师布置的作业</p>
           <p className="text-sm text-slate-500 mt-1">
-            {pending.length > 0 ? `还有 ${pending.length} 项没有完成` : '全部已完成，继续保持'}
+            {items.length === 0
+              ? '老师给你留了评语'
+              : pending.length > 0
+                ? `还有 ${pending.length} 项没有完成`
+                : '全部已完成，继续保持'}
           </p>
         </div>
         <button onClick={onRefresh} className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-sm font-bold">
           刷新
         </button>
       </div>
+
+      {feedback.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-amber-100 bg-amber-50 p-4">
+          <div className="text-[10px] font-bold text-amber-700 uppercase tracking-[0.2em]">Teacher's note</div>
+          <div className="mt-2 space-y-2">
+            {feedback.map((note) => (
+              <div key={note.id} className="text-sm text-amber-900">
+                <div className="text-[11px] text-amber-600">
+                  {note.className ? `${note.className} · ` : ''}
+                  {formatFeedbackTime(note.createdAt)}
+                </div>
+                <div className="mt-0.5">{note.content}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3">
         {items.map((item) => {
@@ -3193,6 +3218,7 @@ export default function App() {
   const baselineStateRef = useRef<string>('');
   const [remoteSynced, setRemoteSynced] = useState(false);
   const [studentHomework, setStudentHomework] = useState<StudentHomeworkItem[]>([]);
+  const [teacherFeedback, setTeacherFeedback] = useState<StudentFeedbackNote[]>([]);
   const pushStudyStateRef = useRef<(() => Promise<void>) | null>(null);
   const [retryTarget, setRetryTarget] = useState<MistakeRecord | null>(null);
   const requestSpeechToken = () => apiFetch<SpeechTokenResponse>('/api/speech-token');
@@ -3200,16 +3226,25 @@ export default function App() {
   const loadStudentHomework = useCallback(async () => {
     if (!currentUser || currentUser.role === 'admin') {
       setStudentHomework([]);
+      setTeacherFeedback([]);
       return;
     }
-    try {
-      const data = await apiFetch<{ assignments: StudentHomeworkItem[] }>('/api/homework');
-      setStudentHomework(Array.isArray(data.assignments) ? data.assignments : []);
-    } catch {
-      // Homework is only available when the backend exposes it; keep the
-      // dashboard usable (and quiet) on older deployments.
-      setStudentHomework([]);
-    }
+    // Both endpoints are optional surfaces: a failure in one must not hide the
+    // other, and older deployments simply return 404 here.
+    const [homeworkResult, feedbackResult] = await Promise.allSettled([
+      apiFetch<{ assignments: StudentHomeworkItem[] }>('/api/homework'),
+      apiFetch<{ notes: StudentFeedbackNote[] }>('/api/feedback'),
+    ]);
+    setStudentHomework(
+      homeworkResult.status === 'fulfilled' && Array.isArray(homeworkResult.value.assignments)
+        ? homeworkResult.value.assignments
+        : [],
+    );
+    setTeacherFeedback(
+      feedbackResult.status === 'fulfilled' && Array.isArray(feedbackResult.value.notes)
+        ? feedbackResult.value.notes
+        : [],
+    );
   }, [apiFetch, currentUser?.username, currentUser?.role]);
 
   useEffect(() => {
@@ -4028,6 +4063,7 @@ export default function App() {
                 <>
                   <HomeworkCard
                     items={studentHomework}
+                    feedback={teacherFeedback}
                     currentTextbookId={selectedTextbookId}
                     getUnitLabel={(unitId) => {
                       const unit = availableUnits.find((item) => item.id === unitId);

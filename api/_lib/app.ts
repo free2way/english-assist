@@ -4,10 +4,12 @@ import {
   changePassword,
   cleanupExpiredSessions,
   createClass,
+  createFeedback,
   createHomework,
   createSessionForCredentials,
   createUser,
   deleteClass,
+  deleteFeedback,
   deleteHomework,
   deleteSession,
   deleteUser,
@@ -17,6 +19,8 @@ import {
   getTextbookContent,
   HOMEWORK_TASK_KEYS,
   listClasses,
+  listFeedbackForStudent,
+  listFeedbackForTeacher,
   listHomeworkForStudent,
   listHomeworkForTeacher,
   listStudyStates,
@@ -403,6 +407,78 @@ app.delete('/api/homework', requireAuth, requireAdmin, async (req, res) => {
   const ok = await deleteHomework(id);
   if (!ok) {
     res.status(404).json({ error: '作业不存在' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/feedback', requireAuth, requireAdmin, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  const studentId = typeof req.body?.studentId === 'string' ? req.body.studentId.trim() : '';
+  const classId = typeof req.body?.classId === 'string' ? req.body.classId.trim() : '';
+  const assignmentId = typeof req.body?.assignmentId === 'string' ? req.body.assignmentId.trim() : '';
+  const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+
+  if (!studentId) {
+    res.status(400).json({ error: '缺少学生标识' });
+    return;
+  }
+  if (!content) {
+    res.status(400).json({ error: '请填写评语内容' });
+    return;
+  }
+  if (content.length > 200) {
+    res.status(400).json({ error: '评语不能超过 200 个字' });
+    return;
+  }
+
+  const users = await listUsers();
+  if (!users.some((item) => item.id === studentId)) {
+    res.status(404).json({ error: '学生不存在' });
+    return;
+  }
+
+  if (classId) {
+    const classes = await listClasses();
+    if (!classes.some((item) => item.id === classId)) {
+      res.status(404).json({ error: '班级不存在' });
+      return;
+    }
+  }
+
+  const feedback = await createFeedback({
+    studentId,
+    classId: classId || null,
+    assignmentId: assignmentId || null,
+    content,
+    createdBy: user.id,
+  });
+  res.status(201).json({ feedback });
+});
+
+// Teachers see all recent feedback (optionally scoped to a class); students
+// only see their own latest notes.
+app.get('/api/feedback', requireAuth, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  if (user.role === 'admin') {
+    const classId = typeof req.query?.classId === 'string' ? req.query.classId.trim() : '';
+    res.json({ notes: await listFeedbackForTeacher(classId || undefined) });
+    return;
+  }
+
+  res.json({ notes: await listFeedbackForStudent(user.id) });
+});
+
+app.delete('/api/feedback', requireAuth, requireAdmin, async (req, res) => {
+  const id = typeof req.query?.id === 'string' ? req.query.id.trim() : '';
+  if (!id) {
+    res.status(400).json({ error: '缺少评语标识' });
+    return;
+  }
+
+  const ok = await deleteFeedback(id);
+  if (!ok) {
+    res.status(404).json({ error: '评语不存在' });
     return;
   }
   res.json({ ok: true });

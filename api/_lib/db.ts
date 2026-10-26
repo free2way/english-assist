@@ -296,6 +296,19 @@ const schemaStatements = [
     )
   `,
   `CREATE INDEX IF NOT EXISTS idx_homework_class_id ON homework_assignments(class_id)`,
+  `
+    CREATE TABLE IF NOT EXISTS feedback_notes (
+      id TEXT PRIMARY KEY,
+      student_id TEXT NOT NULL,
+      class_id TEXT,
+      assignment_id TEXT,
+      content TEXT NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_student ON feedback_notes(student_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_class ON feedback_notes(class_id)`,
 ];
 
 export interface StudyStateRecord {
@@ -595,6 +608,7 @@ export const deleteClass = async (id: string) => {
   // Explicit cascade: the local libSQL file does not enable PRAGMA foreign_keys.
   await executeStatement('DELETE FROM class_members WHERE class_id = ?', [id]);
   await executeStatement('DELETE FROM homework_assignments WHERE class_id = ?', [id]);
+  await executeStatement('DELETE FROM feedback_notes WHERE class_id = ?', [id]);
   await executeStatement('DELETE FROM classes WHERE id = ?', [id]);
   return true;
 };
@@ -818,6 +832,166 @@ export const listHomeworkForStudent = async (userId: string): Promise<HomeworkSt
       completed: isAssignmentCompleted(tasks, taskKeys),
     };
   });
+};
+
+export interface FeedbackNote {
+  id: string;
+  studentId: string;
+  studentName: string;
+  classId: string | null;
+  className: string | null;
+  assignmentId: string | null;
+  content: string;
+  createdAt: string;
+}
+
+export interface StudentFeedbackNote {
+  id: string;
+  classId: string | null;
+  className: string | null;
+  assignmentId: string | null;
+  content: string;
+  createdAt: string;
+}
+
+export const createFeedback = async (input: {
+  studentId: string;
+  classId?: string | null;
+  assignmentId?: string | null;
+  content: string;
+  createdBy?: string | null;
+}): Promise<FeedbackNote> => {
+  await initializeDatabase();
+  const id = crypto.randomUUID();
+  const classId = input.classId?.trim() ? input.classId.trim() : null;
+  const assignmentId = input.assignmentId?.trim() ? input.assignmentId.trim() : null;
+  const content = input.content.trim();
+
+  await executeStatement(
+    `
+      INSERT INTO feedback_notes (id, student_id, class_id, assignment_id, content, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    [id, input.studentId, classId, assignmentId, content, input.createdBy ?? null]
+  );
+
+  const row = await queryFirst<{
+    id: string;
+    student_id: string;
+    student_name: string | null;
+    class_id: string | null;
+    class_name: string | null;
+    assignment_id: string | null;
+    content: string;
+    created_at: string;
+  }>(
+    `
+      SELECT f.id, f.student_id, u.username AS student_name, f.class_id, c.name AS class_name,
+             f.assignment_id, f.content, f.created_at
+      FROM feedback_notes f
+      LEFT JOIN users u ON u.id = f.student_id
+      LEFT JOIN classes c ON c.id = f.class_id
+      WHERE f.id = ?
+    `,
+    [id]
+  );
+
+  return {
+    id,
+    studentId: input.studentId,
+    studentName: row?.student_name ?? '',
+    classId,
+    className: row?.class_name ?? null,
+    assignmentId,
+    content,
+    createdAt: row?.created_at ?? new Date().toISOString(),
+  };
+};
+
+export const listFeedbackForTeacher = async (classId?: string): Promise<FeedbackNote[]> => {
+  await initializeDatabase();
+  const rows = await queryAll<{
+    id: string;
+    student_id: string;
+    student_name: string | null;
+    class_id: string | null;
+    class_name: string | null;
+    assignment_id: string | null;
+    content: string;
+    created_at: string;
+  }>(
+    classId
+      ? `
+        SELECT f.id, f.student_id, u.username AS student_name, f.class_id, c.name AS class_name,
+               f.assignment_id, f.content, f.created_at
+        FROM feedback_notes f
+        LEFT JOIN users u ON u.id = f.student_id
+        LEFT JOIN classes c ON c.id = f.class_id
+        WHERE f.class_id = ?
+        ORDER BY f.created_at DESC, f.rowid DESC
+        LIMIT 200
+      `
+      : `
+        SELECT f.id, f.student_id, u.username AS student_name, f.class_id, c.name AS class_name,
+               f.assignment_id, f.content, f.created_at
+        FROM feedback_notes f
+        LEFT JOIN users u ON u.id = f.student_id
+        LEFT JOIN classes c ON c.id = f.class_id
+        ORDER BY f.created_at DESC, f.rowid DESC
+        LIMIT 200
+      `,
+    classId ? [classId] : []
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    studentId: row.student_id,
+    studentName: row.student_name ?? '',
+    classId: row.class_id ?? null,
+    className: row.class_name ?? null,
+    assignmentId: row.assignment_id ?? null,
+    content: row.content,
+    createdAt: row.created_at,
+  }));
+};
+
+export const listFeedbackForStudent = async (userId: string, limit = 3): Promise<StudentFeedbackNote[]> => {
+  await initializeDatabase();
+  const rows = await queryAll<{
+    id: string;
+    class_id: string | null;
+    class_name: string | null;
+    assignment_id: string | null;
+    content: string;
+    created_at: string;
+  }>(
+    `
+      SELECT f.id, f.class_id, c.name AS class_name, f.assignment_id, f.content, f.created_at
+      FROM feedback_notes f
+      LEFT JOIN classes c ON c.id = f.class_id
+      WHERE f.student_id = ?
+      ORDER BY f.created_at DESC, f.rowid DESC
+      LIMIT ?
+    `,
+    [userId, limit]
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    classId: row.class_id ?? null,
+    className: row.class_name ?? null,
+    assignmentId: row.assignment_id ?? null,
+    content: row.content,
+    createdAt: row.created_at,
+  }));
+};
+
+export const deleteFeedback = async (id: string) => {
+  await initializeDatabase();
+  const target = await queryFirst<{ id: string }>('SELECT id FROM feedback_notes WHERE id = ?', [id]);
+  if (!target) return false;
+  await executeStatement('DELETE FROM feedback_notes WHERE id = ?', [id]);
+  return true;
 };
 
 let initializationPromise: Promise<void> | null = null;
@@ -1082,6 +1256,7 @@ export const deleteUser = async (id: string) => {
   // Explicit cascade for the rows that reference this user.
   await executeStatement('DELETE FROM class_members WHERE user_id = ?', [id]);
   await executeStatement('DELETE FROM study_states WHERE user_id = ?', [id]);
+  await executeStatement('DELETE FROM feedback_notes WHERE student_id = ?', [id]);
   await executeStatement('DELETE FROM users WHERE id = ? AND role != ?', [id, 'admin']);
   return true;
 };

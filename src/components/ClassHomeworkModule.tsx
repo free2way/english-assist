@@ -1,8 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, Check, ClipboardList, Plus, Trash2, Users, X } from 'lucide-react';
+import { BookOpen, Check, ClipboardList, Download, Plus, Trash2, Users, X } from 'lucide-react';
 
 import { cn } from '../lib/utils';
-import { getHomeworkTaskLabel, HOMEWORK_TASK_OPTIONS } from './textbook/homework';
+import { downloadCsv } from '../lib/csv';
+import {
+  formatFeedbackTime,
+  getHomeworkTaskLabel,
+  HOMEWORK_TASK_OPTIONS,
+  type TeacherFeedbackNote,
+} from './textbook/homework';
 import type { AppUser, TextbookContent, TextbookSummary } from './textbook/types';
 
 export interface ClassMemberRecord {
@@ -73,6 +79,9 @@ export function ClassHomeworkModule({
     taskKeys: ['preview'] as string[],
     dueAt: '',
   });
+  const [notes, setNotes] = useState<TeacherFeedbackNote[]>([]);
+  const [noteTarget, setNoteTarget] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
 
   const loadClasses = useCallback(async () => {
     try {
@@ -125,6 +134,25 @@ export function ClassHomeworkModule({
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((unit) => ({ id: unit.id, label: `${unit.unitCode} ${unit.title}`.trim() }));
   }, [activeTextbookId, textbookContents]);
+
+  const loadNotes = useCallback(async (classId: string) => {
+    if (!classId) {
+      setNotes([]);
+      return;
+    }
+    try {
+      const data = await apiFetch<{ notes: TeacherFeedbackNote[] }>(
+        `/api/feedback?classId=${encodeURIComponent(classId)}`,
+      );
+      setNotes(Array.isArray(data.notes) ? data.notes : []);
+    } catch {
+      setNotes([]);
+    }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    void loadNotes(selectedClassId);
+  }, [loadNotes, selectedClassId]);
 
   const runAction = async (action: () => Promise<void>, successMessage: string) => {
     setIsBusy(true);
@@ -225,6 +253,52 @@ export function ClassHomeworkModule({
         ? prev.taskKeys.filter((item) => item !== key)
         : [...prev.taskKeys, key],
     }));
+  };
+
+  const handleSubmitNote = (studentId: string, assignmentId: string) => {
+    const content = noteDraft.trim();
+    if (!content) return;
+    void runAction(async () => {
+      await apiFetch('/api/feedback', {
+        method: 'POST',
+        body: JSON.stringify({
+          studentId,
+          classId: selectedClassId || undefined,
+          assignmentId,
+          content,
+        }),
+      });
+      setNoteTarget('');
+      setNoteDraft('');
+      await loadNotes(selectedClassId);
+    }, '评语已保存');
+  };
+
+  const handleExportHomeworkCsv = () => {
+    const rows = assignments.flatMap((assignment) => {
+      const late = assignment.dueAt ? isOverdue(assignment.dueAt) && assignment.completedCount < assignment.totalCount : false;
+      return assignment.students.map((student) => [
+        assignment.className,
+        assignment.title,
+        assignment.unitId,
+        assignment.dueAt || '',
+        late ? '已逾期' : '正常',
+        student.username,
+        student.completed ? '已完成' : '进行中',
+        ...HOMEWORK_TASK_OPTIONS.map((task) => (
+          assignment.taskKeys.includes(task.key) ? (student.tasks[task.key] ? '✓' : '✗') : ''
+        )),
+        assignment.taskKeys.filter((key) => student.tasks[key]).length,
+        assignment.taskKeys.length,
+      ]);
+    });
+
+    downloadCsv(
+      `作业完成情况-${selectedClass?.name || '全部班级'}`,
+      ['班级', '作业', '单元', '截止日期', '截止状态', '学生', '完成状态',
+        ...HOMEWORK_TASK_OPTIONS.map((task) => task.label), '已完成任务数', '任务总数'],
+      rows,
+    );
   };
 
   return (
@@ -379,7 +453,17 @@ export function ClassHomeworkModule({
               {selectedClass ? `当前班级：${selectedClass.name}` : '先在上方创建并选择一个班级'}
             </p>
           </div>
-          <span className="text-xs text-slate-400">完成情况自动统计</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-400">完成情况自动统计</span>
+            <button
+              onClick={handleExportHomeworkCsv}
+              disabled={assignments.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold disabled:opacity-40"
+            >
+              <Download size={14} />
+              导出完成情况
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleCreateHomework} className="space-y-3 mb-6">
@@ -497,31 +581,75 @@ export function ClassHomeworkModule({
                   {assignment.students.length === 0 && (
                     <div className="text-xs text-slate-400">班级里还没有学生，无法统计完成情况。</div>
                   )}
-                  {assignment.students.map((student) => (
-                    <div key={student.userId} className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="font-bold text-slate-700 w-24 truncate">{student.username}</span>
-                      <span
-                        className={cn(
-                          'px-2 py-0.5 rounded-full font-bold',
-                          student.completed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
+                  {assignment.students.map((student) => {
+                    const latestNote = notes.find((note) => note.studentId === student.userId);
+                    const noteKey = `${assignment.id}:${student.userId}`;
+                    const composing = noteTarget === noteKey;
+                    return (
+                      <div key={student.userId} className="rounded-xl bg-white border border-slate-100 p-2">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-bold text-slate-700 w-24 truncate">{student.username}</span>
+                          <span
+                            className={cn(
+                              'px-2 py-0.5 rounded-full font-bold',
+                              student.completed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
+                            )}
+                          >
+                            {student.completed ? '已完成' : '进行中'}
+                          </span>
+                          {assignment.taskKeys.map((key) => (
+                            <span
+                              key={key}
+                              className={cn(
+                                'inline-flex items-center gap-1 px-2 py-0.5 rounded-full',
+                                student.tasks[key] ? 'bg-emerald-50 text-emerald-600' : 'bg-white border border-slate-100 text-slate-400',
+                              )}
+                            >
+                              {student.tasks[key] ? <Check size={10} /> : null}
+                              {getHomeworkTaskLabel(key)}
+                            </span>
+                          ))}
+                          <button
+                            onClick={() => {
+                              setNoteTarget(composing ? '' : noteKey);
+                              setNoteDraft('');
+                            }}
+                            className="ml-auto px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 text-[11px] font-bold hover:bg-amber-100"
+                          >
+                            {composing ? '取消' : latestNote ? '再写一条评语' : '写评语'}
+                          </button>
+                        </div>
+                        {latestNote && (
+                          <div className="mt-2 rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-1.5 text-xs text-amber-900">
+                            <span className="font-bold">评语</span>
+                            <span className="text-amber-600"> · {formatFeedbackTime(latestNote.createdAt)}</span>
+                            <div className="mt-0.5">{latestNote.content}</div>
+                          </div>
                         )}
-                      >
-                        {student.completed ? '已完成' : '进行中'}
-                      </span>
-                      {assignment.taskKeys.map((key) => (
-                        <span
-                          key={key}
-                          className={cn(
-                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full',
-                            student.tasks[key] ? 'bg-emerald-50 text-emerald-600' : 'bg-white border border-slate-100 text-slate-400',
-                          )}
-                        >
-                          {student.tasks[key] ? <Check size={10} /> : null}
-                          {getHomeworkTaskLabel(key)}
-                        </span>
-                      ))}
-                    </div>
-                  ))}
+                        {composing && (
+                          <div className="mt-2 space-y-2">
+                            <textarea
+                              value={noteDraft}
+                              onChange={(e) => setNoteDraft(e.target.value.slice(0, 200))}
+                              rows={2}
+                              placeholder={`给 ${student.username} 写评语（不超过 200 字）`}
+                              className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs outline-none focus:border-amber-400"
+                            />
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-slate-400">{noteDraft.length}/200</span>
+                              <button
+                                onClick={() => handleSubmitNote(student.userId, assignment.id)}
+                                disabled={isBusy || !noteDraft.trim()}
+                                className="px-3 py-1.5 rounded-xl bg-amber-500 text-white text-xs font-bold disabled:opacity-50"
+                              >
+                                保存评语
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}

@@ -161,4 +161,23 @@ DELETE /api/homework?id=xxx
 
 > 约定：这三个资源都刻意保持「/api/ + 单段路径」，因为 Vercel 的 catch-all 只覆盖一层路径，多层路径在生产会直接 404（血泪教训）。新增接口也请遵守。
 
-仍未做：B4 导出 CSV、B5 批改/评语、B6 周报与家长报告、C1-C4 激励、D2 内容工作流、E2-E4 工程重构、E6 备份与 migration。
+---
+
+## 十一、已完成（2026-10-26 迭代 4）
+
+| 项 | 实现要点 | 验证 |
+| --- | --- | --- |
+| B4 导出 CSV | 教师看板"导出 CSV"（当前筛选下的学生：年级/学期/学校/教材/当前单元/已完成任务/错题总数/待复盘错题/连续打卡/闯关准备度/风险等级/最近同步）；作业区"导出完成情况"（每条作业 × 每个学生，按任务打 ✓/✗，含截止状态与完成数）。`src/lib/csv.ts` 负责转义与下载（带 BOM，Excel 打开中文不乱码），日期用本地时区 | 页面内截获 Blob 校验两份 CSV 的表头与内容；`buildCsv` 对逗号/引号/换行的转义单独验证 |
+| B5 教师评语 | 新增 `feedback_notes` 表与 `/api/feedback`（POST 写评语、GET 按角色分流、DELETE 删除）；教师端在每条作业的学生行内"写评语"（≤200 字），展示该生最新一条；学生首页作业卡片顶部显示"老师评语"（班级 + 时间） | 本地端到端：教师写评语 → 学生登录看到同名评语；删班后评语一并清理（sqlite 直查 0 残留） |
+| 顺带 | 评语/作业接口按角色分流复用同一路径，仍保持单段路径约束；`deleteUser` / `deleteClass` 会清理 `feedback_notes` | 同上的残留检查 |
+
+### 关键接口（新增）
+
+```
+POST   /api/feedback                       # 教师：{ studentId, classId?, assignmentId?, content } → 201
+GET    /api/feedback?classId=xxx           # 教师：该班评语（倒序，limit 200）
+GET    /api/feedback                       # 学生：自己最近 3 条（同一路径按角色分流）
+DELETE /api/feedback?id=xxx
+```
+
+仍未做：B5 作业批改（打分/等级）、B6 周报与家长报告、C1-C4 激励、D2 内容工作流、E2-E4 工程重构、E6 备份与 migration。

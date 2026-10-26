@@ -3,6 +3,7 @@ import {
   Bell,
   BookOpen,
   Check,
+  Download,
   GraduationCap,
   LineChart as LineChartIcon,
   Lock,
@@ -18,6 +19,7 @@ import {
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { cn } from '../lib/utils';
+import { downloadCsv } from '../lib/csv';
 import { ClassHomeworkModule } from './ClassHomeworkModule';
 import type {
   AIConfig,
@@ -43,7 +45,9 @@ interface SampleCatalogItem {
 interface ClassSnapshot {
   user: AppUser;
   state: StudyState;
+  textbookId: string;
   textbookTitle: string;
+  updatedAt?: string;
   currentUnit: UnitBundle | null;
   challenge: ChallengeStatus;
   agentInsight: {
@@ -158,7 +162,9 @@ export function ManagementModule({
     return {
       user,
       state,
+      textbookId: matchedTextbook?.id || '',
       textbookTitle: matchedTextbook?.title || '未导入教材',
+      updatedAt: remote?.updatedAt,
       currentUnit,
       challenge,
       agentInsight,
@@ -197,6 +203,30 @@ export function ManagementModule({
   };
 
   const unitFilterOptions = Array.from(new Set(classSnapshots.map((item) => item.currentUnit?.unit).filter(Boolean))) as string[];
+
+  const handleExportClassCsv = () => {
+    const riskLabel = (level: ClassSnapshot['agentInsight']['riskLevel']) =>
+      level === 'stable' ? '稳定' : level === 'watch' ? '观察' : '干预';
+    downloadCsv(
+      '班级学习数据',
+      ['学生', '年级', '学期', '学校', '教材', '当前单元', '已完成任务', '错题总数', '待复盘错题', '连续打卡(天)', '闯关准备度(%)', '风险等级', '最近同步'],
+      filteredSnapshots.map((snapshot) => [
+        snapshot.user.username,
+        snapshot.user.grade,
+        snapshot.user.semester,
+        snapshot.user.school,
+        snapshot.textbookTitle,
+        snapshot.currentUnit?.unit || '',
+        snapshot.completedTasks,
+        snapshot.mistakes,
+        snapshot.state.mistakes.filter((item) => !item.resolved).length,
+        snapshot.streak,
+        snapshot.challenge.progress,
+        riskLabel(snapshot.agentInsight.riskLevel),
+        snapshot.updatedAt ? new Date(snapshot.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '未同步',
+      ]),
+    );
+  };
 
   const loadUsers = useCallback(async () => {
     setIsLoadingUsers(true);
@@ -395,7 +425,17 @@ export function ManagementModule({
             <h3 className="font-bold text-slate-800">班级学习看板</h3>
             <p className="text-sm text-slate-500 mt-1">面向小规模班级的学习推进与风险观察</p>
           </div>
-          <span className="text-xs text-slate-400">当前设备本地数据</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-400">服务端学习数据</span>
+            <button
+              onClick={handleExportClassCsv}
+              disabled={filteredSnapshots.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold disabled:opacity-40"
+            >
+              <Download size={14} />
+              导出 CSV
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
           <select value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)} className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs outline-none">
