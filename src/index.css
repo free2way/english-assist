@@ -58,3 +58,31 @@
 .rotate-y-180 {
   transform: rotateY(180deg);
 }
+
+/* Weekly report: print only the report card, hide the app chrome and buttons. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .weekly-report,
+  .weekly-report * {
+    visibility: visible;
+  }
+  .weekly-report {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 24px !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

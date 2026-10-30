@@ -20,7 +20,9 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 
 import { cn } from '../lib/utils';
 import { downloadCsv } from '../lib/csv';
-import { ClassHomeworkModule } from './ClassHomeworkModule';
+import { ClassHomeworkModule, type HomeworkAssignmentRecord } from './ClassHomeworkModule';
+import { WeeklyReport } from './WeeklyReport';
+import type { TeacherFeedbackNote } from './textbook/homework';
 import type {
   AIConfig,
   AppUser,
@@ -119,6 +121,9 @@ export function ManagementModule({
   const [isLoadingUsers, setIsLoadingUsers] = useState(true);
   const [remoteStates, setRemoteStates] = useState<Record<string, { state: StudyState; updatedAt: string }>>({});
   const [remoteStatesError, setRemoteStatesError] = useState('');
+  const [reportStudent, setReportStudent] = useState<ClassSnapshot | null>(null);
+  const [reportHomework, setReportHomework] = useState<HomeworkAssignmentRecord[]>([]);
+  const [reportFeedback, setReportFeedback] = useState<TeacherFeedbackNote[]>([]);
 
   // Teacher dashboards must read server-side study states: reading the admin's
   // own localStorage only ever showed data from a single browser.
@@ -226,6 +231,23 @@ export function ManagementModule({
         snapshot.updatedAt ? new Date(snapshot.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '未同步',
       ]),
     );
+  };
+
+  /** Opens the weekly report and pulls the two teacher views it needs. */
+  const handleOpenReport = async (snapshot: ClassSnapshot) => {
+    setReportStudent(snapshot);
+    setReportHomework([]);
+    setReportFeedback([]);
+    const [homeworkResult, feedbackResult] = await Promise.allSettled([
+      apiFetch<{ assignments: HomeworkAssignmentRecord[] }>('/api/homework'),
+      apiFetch<{ notes: TeacherFeedbackNote[] }>('/api/feedback'),
+    ]);
+    if (homeworkResult.status === 'fulfilled') {
+      setReportHomework(homeworkResult.value.assignments || []);
+    }
+    if (feedbackResult.status === 'fulfilled') {
+      setReportFeedback(feedbackResult.value.notes || []);
+    }
   };
 
   const loadUsers = useCallback(async () => {
@@ -547,7 +569,15 @@ export function ManagementModule({
               <div key={snapshot.user.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
-                    <div className="font-bold text-slate-800">{snapshot.user.username}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-bold text-slate-800">{snapshot.user.username}</div>
+                      <button
+                        onClick={() => handleOpenReport(snapshot)}
+                        className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-600 text-[10px] font-bold hover:bg-blue-100"
+                      >
+                        周报
+                      </button>
+                    </div>
                     <div className="text-xs text-slate-500 mt-1">
                       {snapshot.user.grade} · {snapshot.user.semester} · 当前单元 {snapshot.currentUnit?.unit || '--'}
                     </div>
@@ -886,6 +916,38 @@ export function ManagementModule({
           </div>
         </div>
       </div>
+
+      {reportStudent && (
+        <WeeklyReport
+          student={{
+            username: reportStudent.user.username,
+            grade: reportStudent.user.grade,
+            semester: reportStudent.user.semester,
+            school: reportStudent.user.school,
+          }}
+          textbookTitle={reportStudent.textbookTitle}
+          currentUnitLabel={reportStudent.currentUnit ? `${reportStudent.currentUnit.unit} ${reportStudent.currentUnit.title}`.trim() : '--'}
+          studyState={reportStudent.state}
+          homework={reportHomework
+            .map((assignment) => {
+              const progress = assignment.students.find((item) => item.userId === reportStudent.user.id);
+              if (!progress) return null;
+              return {
+                title: assignment.title,
+                completed: progress.completed,
+                dueAt: assignment.dueAt,
+                taskKeys: assignment.taskKeys,
+                tasks: progress.tasks,
+              };
+            })
+            .filter((item): item is NonNullable<typeof item> => Boolean(item))}
+          feedback={reportFeedback
+            .filter((note) => note.studentId === reportStudent.user.id)
+            .map((note) => note.content)}
+          suggestion={reportStudent.agentInsight.actions[0] || ''}
+          onClose={() => setReportStudent(null)}
+        />
+      )}
     </div>
   );
 }
