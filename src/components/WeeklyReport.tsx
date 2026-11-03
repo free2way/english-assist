@@ -16,6 +16,7 @@ interface WeeklyReportProps {
     dueAt: string | null;
     taskKeys: string[];
     tasks: Record<string, boolean>;
+    score?: number | null;
   }>;
   feedback: string[];
   suggestion: string;
@@ -177,6 +178,9 @@ export function WeeklyReport({
                   >
                     {item.completed ? '已完成' : '未完成'}
                   </span>
+                  {typeof item.score === 'number' && (
+                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">{item.score} 分</span>
+                  )}
                   {item.dueAt && <span className="text-slate-400">截止 {item.dueAt}</span>}
                 </div>
               ))}

@@ -190,4 +190,19 @@ DELETE /api/feedback?id=xxx
 
 > 说明：周报数据全部来自已落库的学习快照 + 作业 + 评语，没有新增表或接口。
 
-仍未做：B5 作业批改（打分/等级）、C1-C4 激励、D2 内容工作流、E2-E4 工程重构、E6 备份与 migration。
+---
+
+## 十三、已完成（2026-11-03 迭代 6）
+
+| 项 | 实现要点 | 验证 |
+| --- | --- | --- |
+| B5+ 作业评分 | 新增 `homework_grades` 表（`assignment_id + student_id` 复合主键，0–100 整数）与 `PUT/DELETE /api/homework-grades`；教师端在每个学生行内直接打分（未评分/100/95/90/85/80/75/70/60），分数按档位着色并可随时撤销；学生首页作业卡片显示"老师评分"；作业 CSV 增加"评分"列；周报的作业条目与复制文本都带分数。`listHomeworkForTeacher` / `listHomeworkForStudent` 各用一次查询合并评分，避免 N+1 | 本地端到端：教师选 90 → 教师视角 `score:90`、学生视角 `score:90` 且卡片显示"老师评分 90"、周报显示"已完成 90 分"；撤销评分回到未评分。删除班级/作业/学生都会清理评分（sqlite 直查 0 残留） |
+
+### 关键接口（新增）
+
+```
+PUT    /api/homework-grades                # 教师：{ assignmentId, studentId, score(0-100) }
+DELETE /api/homework-grades?assignmentId=&userId=
+```
+
+仍未做：C1-C4 激励、D2 内容工作流、E2-E4 工程重构、E6 备份与 migration。

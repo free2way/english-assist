@@ -11,12 +11,14 @@ import {
   deleteClass,
   deleteFeedback,
   deleteHomework,
+  deleteHomeworkGrade,
   deleteSession,
   deleteUser,
   getAIServiceConfig,
   getStudyState,
   getUserByToken,
   getTextbookContent,
+  homeworkAssignmentExists,
   HOMEWORK_TASK_KEYS,
   listClasses,
   listFeedbackForStudent,
@@ -25,6 +27,7 @@ import {
   listHomeworkForTeacher,
   listStudyStates,
   removeClassMember,
+  setHomeworkGrade,
   upsertStudyState,
   importAllTextbookSamples,
   importTextbookSample,
@@ -407,6 +410,54 @@ app.delete('/api/homework', requireAuth, requireAdmin, async (req, res) => {
   const ok = await deleteHomework(id);
   if (!ok) {
     res.status(404).json({ error: '作业不存在' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.put('/api/homework-grades', requireAuth, requireAdmin, async (req, res) => {
+  const user = (req as express.Request & { user: AuthUser }).user;
+  const assignmentId = typeof req.body?.assignmentId === 'string' ? req.body.assignmentId.trim() : '';
+  const studentId = typeof req.body?.studentId === 'string' ? req.body.studentId.trim() : '';
+  const rawScore = req.body?.score;
+
+  if (!assignmentId || !studentId || rawScore === undefined || rawScore === null || rawScore === '') {
+    res.status(400).json({ error: '缺少作业、学生或分数' });
+    return;
+  }
+
+  const score =
+    typeof rawScore === 'string' && rawScore.trim() !== '' ? Number(rawScore.trim()) : rawScore;
+  if (typeof score !== 'number' || !Number.isInteger(score) || score < 0 || score > 100) {
+    res.status(400).json({ error: '分数必须是 0-100 之间的整数' });
+    return;
+  }
+
+  if (!(await homeworkAssignmentExists(assignmentId))) {
+    res.status(404).json({ error: '作业不存在' });
+    return;
+  }
+  const users = await listUsers();
+  if (!users.some((item) => item.id === studentId)) {
+    res.status(404).json({ error: '学生不存在' });
+    return;
+  }
+
+  const grade = await setHomeworkGrade({ assignmentId, studentId, score, gradedBy: user.id });
+  res.json({ grade });
+});
+
+app.delete('/api/homework-grades', requireAuth, requireAdmin, async (req, res) => {
+  const assignmentId = typeof req.query?.assignmentId === 'string' ? req.query.assignmentId.trim() : '';
+  const studentId = typeof req.query?.userId === 'string' ? req.query.userId.trim() : '';
+  if (!assignmentId || !studentId) {
+    res.status(400).json({ error: '缺少作业或学生标识' });
+    return;
+  }
+
+  const ok = await deleteHomeworkGrade(assignmentId, studentId);
+  if (!ok) {
+    res.status(404).json({ error: '评分不存在' });
     return;
   }
   res.json({ ok: true });

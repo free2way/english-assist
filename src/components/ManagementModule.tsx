@@ -938,6 +938,7 @@ export function ManagementModule({
                 dueAt: assignment.dueAt,
                 taskKeys: assignment.taskKeys,
                 tasks: progress.tasks,
+                score: progress.score,
               };
             })
             .filter((item): item is NonNullable<typeof item> => Boolean(item))}

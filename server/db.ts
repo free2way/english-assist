@@ -309,6 +309,17 @@ const schemaStatements = [
   `,
   `CREATE INDEX IF NOT EXISTS idx_feedback_student ON feedback_notes(student_id)`,
   `CREATE INDEX IF NOT EXISTS idx_feedback_class ON feedback_notes(class_id)`,
+  `
+    CREATE TABLE IF NOT EXISTS homework_grades (
+      assignment_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      graded_by TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (assignment_id, student_id)
+    )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_homework_grades_student ON homework_grades(student_id)`,
 ];
 
 export interface StudyStateRecord {
@@ -431,6 +442,7 @@ export interface HomeworkStudentProgress {
   username: string;
   completed: boolean;
   tasks: Record<string, boolean>;
+  score: number | null;
 }
 
 export interface HomeworkTeacherView extends HomeworkAssignmentSummary {
@@ -442,6 +454,7 @@ export interface HomeworkTeacherView extends HomeworkAssignmentSummary {
 export interface HomeworkStudentView extends HomeworkAssignmentSummary {
   tasks: Record<string, boolean>;
   completed: boolean;
+  score: number | null;
 }
 
 /**
@@ -607,6 +620,10 @@ export const deleteClass = async (id: string) => {
   if (!target) return false;
   // Explicit cascade: the local libSQL file does not enable PRAGMA foreign_keys.
   await executeStatement('DELETE FROM class_members WHERE class_id = ?', [id]);
+  await executeStatement(
+    'DELETE FROM homework_grades WHERE assignment_id IN (SELECT id FROM homework_assignments WHERE class_id = ?)',
+    [id]
+  );
   await executeStatement('DELETE FROM homework_assignments WHERE class_id = ?', [id]);
   await executeStatement('DELETE FROM feedback_notes WHERE class_id = ?', [id]);
   await executeStatement('DELETE FROM classes WHERE id = ?', [id]);
@@ -679,7 +696,63 @@ export const deleteHomework = async (id: string) => {
   await initializeDatabase();
   const target = await queryFirst<{ id: string }>('SELECT id FROM homework_assignments WHERE id = ?', [id]);
   if (!target) return false;
+  await executeStatement('DELETE FROM homework_grades WHERE assignment_id = ?', [id]);
   await executeStatement('DELETE FROM homework_assignments WHERE id = ?', [id]);
+  return true;
+};
+
+export const homeworkAssignmentExists = async (id: string) => {
+  await initializeDatabase();
+  const row = await queryFirst<{ id: string }>('SELECT id FROM homework_assignments WHERE id = ?', [id]);
+  return Boolean(row);
+};
+
+export interface HomeworkGrade {
+  assignmentId: string;
+  studentId: string;
+  score: number;
+  updatedAt: string;
+}
+
+export const setHomeworkGrade = async (input: {
+  assignmentId: string;
+  studentId: string;
+  score: number;
+  gradedBy?: string | null;
+}): Promise<HomeworkGrade> => {
+  await initializeDatabase();
+  const updatedAt = new Date().toISOString();
+  await executeStatement(
+    `
+      INSERT INTO homework_grades (assignment_id, student_id, score, graded_by, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(assignment_id, student_id) DO UPDATE SET
+        score = excluded.score,
+        graded_by = excluded.graded_by,
+        updated_at = excluded.updated_at
+    `,
+    [input.assignmentId, input.studentId, input.score, input.gradedBy ?? null, updatedAt]
+  );
+
+  return {
+    assignmentId: input.assignmentId,
+    studentId: input.studentId,
+    score: input.score,
+    updatedAt,
+  };
+};
+
+export const deleteHomeworkGrade = async (assignmentId: string, studentId: string) => {
+  await initializeDatabase();
+  const target = await queryFirst<{ assignment_id: string }>(
+    'SELECT assignment_id FROM homework_grades WHERE assignment_id = ? AND student_id = ?',
+    [assignmentId, studentId]
+  );
+  if (!target) return false;
+  await executeStatement('DELETE FROM homework_grades WHERE assignment_id = ? AND student_id = ?', [
+    assignmentId,
+    studentId,
+  ]);
   return true;
 };
 
@@ -747,6 +820,15 @@ export const listHomeworkForTeacher = async (classId?: string): Promise<Homework
     membersByClass.get(row.class_id)!.push({ userId: row.user_id, username: row.username });
   }
 
+  // One pass over every grade, merged in memory instead of per-student lookups.
+  const gradeRows = await queryAll<{ assignment_id: string; student_id: string; score: number }>(
+    'SELECT assignment_id, student_id, score FROM homework_grades'
+  );
+  const gradesByKey = new Map<string, number>();
+  for (const row of gradeRows) {
+    gradesByKey.set(`${row.assignment_id}:${row.student_id}`, row.score);
+  }
+
   const stateCache = new Map<string, Map<string, string>>();
   const assignments: HomeworkTeacherView[] = [];
 
@@ -760,6 +842,7 @@ export const listHomeworkForTeacher = async (classId?: string): Promise<Homework
         username: member.username,
         completed: isAssignmentCompleted(tasks, taskKeys),
         tasks,
+        score: gradesByKey.get(`${row.id}:${member.userId}`) ?? null,
       };
     });
 
@@ -815,6 +898,15 @@ export const listHomeworkForStudent = async (userId: string): Promise<HomeworkSt
     statesByTextbook.set(row.textbook_id, row.state_json);
   }
 
+  const gradeRows = await queryAll<{ assignment_id: string; score: number }>(
+    'SELECT assignment_id, score FROM homework_grades WHERE student_id = ?',
+    [userId]
+  );
+  const gradesByAssignment = new Map<string, number>();
+  for (const row of gradeRows) {
+    gradesByAssignment.set(row.assignment_id, row.score);
+  }
+
   return rows.map((row) => {
     const taskKeys = parseHomeworkTaskKeys(row.task_keys);
     const tasks = computeTaskCompletion(statesByTextbook.get(row.textbook_id) ?? null, row.unit_id, taskKeys);
@@ -830,6 +922,7 @@ export const listHomeworkForStudent = async (userId: string): Promise<HomeworkSt
       createdAt: row.created_at,
       tasks,
       completed: isAssignmentCompleted(tasks, taskKeys),
+      score: gradesByAssignment.get(row.id) ?? null,
     };
   });
 };
@@ -1257,6 +1350,7 @@ export const deleteUser = async (id: string) => {
   await executeStatement('DELETE FROM class_members WHERE user_id = ?', [id]);
   await executeStatement('DELETE FROM study_states WHERE user_id = ?', [id]);
   await executeStatement('DELETE FROM feedback_notes WHERE student_id = ?', [id]);
+  await executeStatement('DELETE FROM homework_grades WHERE student_id = ?', [id]);
   await executeStatement('DELETE FROM users WHERE id = ? AND role != ?', [id, 'admin']);
   return true;
 };

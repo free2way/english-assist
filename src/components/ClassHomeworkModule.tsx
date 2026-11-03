@@ -6,6 +6,7 @@ import { downloadCsv } from '../lib/csv';
 import {
   formatFeedbackTime,
   getHomeworkTaskLabel,
+  getScoreTone,
   HOMEWORK_TASK_OPTIONS,
   type TeacherFeedbackNote,
 } from './textbook/homework';
@@ -34,6 +35,7 @@ export interface HomeworkStudentProgress {
   username: string;
   completed: boolean;
   tasks: Record<string, boolean>;
+  score: number | null;
 }
 
 export interface HomeworkAssignmentRecord {
@@ -274,6 +276,23 @@ export function ClassHomeworkModule({
     }, '评语已保存');
   };
 
+  const handleSetGrade = (assignmentId: string, studentId: string, rawScore: string) => {
+    void runAction(async () => {
+      if (!rawScore) {
+        await apiFetch(
+          `/api/homework-grades?assignmentId=${encodeURIComponent(assignmentId)}&userId=${encodeURIComponent(studentId)}`,
+          { method: 'DELETE' },
+        );
+      } else {
+        await apiFetch('/api/homework-grades', {
+          method: 'PUT',
+          body: JSON.stringify({ assignmentId, studentId, score: Number(rawScore) }),
+        });
+      }
+      await loadAssignments(selectedClassId);
+    }, rawScore ? '评分已保存' : '已撤销评分');
+  };
+
   const handleExportHomeworkCsv = () => {
     const rows = assignments.flatMap((assignment) => {
       const late = assignment.dueAt ? isOverdue(assignment.dueAt) && assignment.completedCount < assignment.totalCount : false;
@@ -285,6 +304,7 @@ export function ClassHomeworkModule({
         late ? '已逾期' : '正常',
         student.username,
         student.completed ? '已完成' : '进行中',
+        student.score ?? '',
         ...HOMEWORK_TASK_OPTIONS.map((task) => (
           assignment.taskKeys.includes(task.key) ? (student.tasks[task.key] ? '✓' : '✗') : ''
         )),
@@ -295,7 +315,7 @@ export function ClassHomeworkModule({
 
     downloadCsv(
       `作业完成情况-${selectedClass?.name || '全部班级'}`,
-      ['班级', '作业', '单元', '截止日期', '截止状态', '学生', '完成状态',
+      ['班级', '作业', '单元', '截止日期', '截止状态', '学生', '完成状态', '评分',
         ...HOMEWORK_TASK_OPTIONS.map((task) => task.label), '已完成任务数', '任务总数'],
       rows,
     );
@@ -609,12 +629,29 @@ export function ClassHomeworkModule({
                               {getHomeworkTaskLabel(key)}
                             </span>
                           ))}
+                          {student.score !== null && student.score !== undefined && (
+                            <span className={cn('px-2 py-0.5 rounded-full font-bold', getScoreTone(student.score))}>
+                              {student.score} 分
+                            </span>
+                          )}
+                          <select
+                            value={student.score ?? ''}
+                            onChange={(event) => handleSetGrade(assignment.id, student.userId, event.target.value)}
+                            disabled={isBusy}
+                            title="给这次作业打分"
+                            className="ml-auto bg-white border border-slate-100 rounded-lg px-2 py-1 text-[11px] text-slate-600 outline-none"
+                          >
+                            <option value="">未评分</option>
+                            {[100, 95, 90, 85, 80, 75, 70, 60].map((value) => (
+                              <option key={value} value={value}>{value} 分</option>
+                            ))}
+                          </select>
                           <button
                             onClick={() => {
                               setNoteTarget(composing ? '' : noteKey);
                               setNoteDraft('');
                             }}
-                            className="ml-auto px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 text-[11px] font-bold hover:bg-amber-100"
+                            className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 text-[11px] font-bold hover:bg-amber-100"
                           >
                             {composing ? '取消' : latestNote ? '再写一条评语' : '写评语'}
                           </button>

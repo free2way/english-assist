@@ -59,6 +59,7 @@ import {
   formatFeedbackTime,
   getHomeworkTaskLabel,
   getNextHomeworkTask,
+  getScoreTone,
   isHomeworkOverdue,
   type StudentFeedbackNote,
   type StudentHomeworkItem,
@@ -1738,7 +1739,14 @@ const HomeworkCard = ({
             >
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
-                  <div className="font-bold text-slate-800">{item.title}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-bold text-slate-800">{item.title}</div>
+                    {typeof item.score === 'number' && (
+                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-bold', getScoreTone(item.score))}>
+                        老师评分 {item.score}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-slate-500 mt-1">
                     {item.className} · {getUnitLabel(item.unitId)}
                   </div>

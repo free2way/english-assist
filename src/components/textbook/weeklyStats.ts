@@ -132,7 +132,7 @@ export const buildWeeklyReportText = (input: {
   semester: string;
   textbookTitle: string;
   stats: WeeklyStats;
-  homework: Array<{ title: string; completed: boolean; dueAt: string | null }>;
+  homework: Array<{ title: string; completed: boolean; dueAt: string | null; score?: number | null }>;
   feedback: string[];
   suggestion: string;
 }) => {
@@ -164,7 +164,10 @@ export const buildWeeklyReportText = (input: {
     lines.push('');
     lines.push('作业：');
     homework.forEach((item) => {
-      lines.push(`- ${item.title}：${item.completed ? '已完成' : '未完成'}${item.dueAt ? `（截止 ${item.dueAt}）` : ''}`);
+      const parts = [item.completed ? '已完成' : '未完成'];
+      if (typeof item.score === 'number') parts.push(`${item.score} 分`);
+      if (item.dueAt) parts.push(`截止 ${item.dueAt}`);
+      lines.push(`- ${item.title}：${parts.join('，')}`);
     });
   }
   if (feedback.length > 0) {

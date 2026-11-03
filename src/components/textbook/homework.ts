@@ -13,6 +13,8 @@ export interface StudentHomeworkItem {
   createdAt: string;
   tasks: Record<string, boolean>;
   completed: boolean;
+  /** 0-100, set by the teacher; null while ungraded. */
+  score: number | null;
 }
 
 export const HOMEWORK_TASK_OPTIONS: Array<{ key: LessonStageKey; label: string }> = [
@@ -79,3 +81,13 @@ export const formatFeedbackTime = (value: string) => {
     hour12: false,
   });
 };
+
+/** Shared palette for a 0-100 homework score. */
+export const getScoreTone = (score: number) =>
+  score >= 90
+    ? 'bg-emerald-100 text-emerald-700'
+    : score >= 75
+      ? 'bg-blue-100 text-blue-700'
+      : score >= 60
+        ? 'bg-amber-100 text-amber-700'
+        : 'bg-rose-100 text-rose-700';
