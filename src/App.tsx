@@ -42,6 +42,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChallengeModule } from './components/ChallengeModule';
 import { DictationModule } from './components/DictationModule';
 import { ListeningModule } from './components/ListeningModule';
+import { GrowthPanel } from './components/GrowthPanel';
 import { ManagementModule } from './components/ManagementModule';
 import { StatCard } from './components/StatCard';
 import { Statistics } from './components/Statistics';
@@ -902,10 +903,34 @@ const calculateCheckinStatus = (record: DailyCheckinRecord) => {
   };
 };
 
+/**
+ * Check-in used to be gated on three clicks, one of which was the unchecked
+ * "mark as done" shortcut. It now needs one completed lesson task plus one
+ * timestamped practice (dictation, pronunciation, challenge or mistake retry).
+ */
+const getTodayLearningSignals = (state: StudyState) => {
+  const today = getTodayKey();
+  const record = state.dailyCheckins.find((item) => item.date === today);
+  const tasks = record?.completedTaskIds.length || 0;
+  const tasksInRange = (value: string | undefined) => Boolean(value) && toLocalDateKey(new Date(value)) === today;
+  const practices =
+    state.dictationAttempts.filter((item) => tasksInRange(item.completedAt)).length
+    + state.pronunciationAssessments.filter((item) => tasksInRange(item.createdAt)).length
+    + state.challengeAttempts.filter((item) => tasksInRange(item.completedAt)).length
+    + state.mistakes.filter((item) => tasksInRange(item.lastRetriedAt)).length;
+  return { tasks, practices, ready: tasks >= 1 && practices >= 1 };
+};
+
 const getCheckinStreak = (dailyCheckins: DailyCheckinRecord[]) => {
   const checkedDates = new Set(dailyCheckins.filter((item) => item.checkedIn).map((item) => item.date));
   let streak = 0;
   const cursor = new Date();
+
+  // A streak stays alive until midnight: if today is not checked in yet, start
+  // counting from yesterday so an evening view does not show "0 天".
+  if (!checkedDates.has(toLocalDateKey(cursor))) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
 
   while (true) {
     const date = toLocalDateKey(cursor);
@@ -1807,7 +1832,6 @@ const Dashboard = ({
   onOpenStage,
   onOpenChallenge,
   onCheckInToday,
-  onCompleteRecommendation,
 }: {
   currentUser: AppUser;
   currentUnit: UnitBundle | null;
@@ -1817,7 +1841,6 @@ const Dashboard = ({
   onOpenStage: (stage: LessonStageKey) => void;
   onOpenChallenge: () => void;
   onCheckInToday: () => void;
-  onCompleteRecommendation: (item: RecommendationItem) => void;
 }) => {
   const todayTasks = currentUnit
     ? currentUnit.stages.map((stage) => ({
@@ -1843,7 +1866,7 @@ const Dashboard = ({
   const reviewPack = buildReviewPack(studyState);
   const challengeStatus = getUnitChallengeStatus(currentUnit, studyState);
   const todayRecord = getOrCreateDailyCheckin(studyState, getTodayKey());
-  const todayCheckin = calculateCheckinStatus(todayRecord);
+  const todaySignals = getTodayLearningSignals(studyState);
   const streak = getCheckinStreak(studyState.dailyCheckins);
 
   return (
@@ -1936,12 +1959,6 @@ const Dashboard = ({
                   className="px-3 py-2 rounded-xl bg-blue-500 text-white text-xs font-bold"
                 >
                   去完成
-                </button>
-                <button
-                  onClick={() => onCompleteRecommendation(item)}
-                  className="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold"
-                >
-                  记为已做
                 </button>
               </div>
             </div>
@@ -2038,17 +2055,19 @@ const Dashboard = ({
           <div>
             <h3 className="font-bold text-slate-800">每日打卡</h3>
             <p className="text-sm text-slate-500 mt-1">
-              今日已推进 {todayCheckin.progressCount}/3 个关键动作，{todayCheckin.ready ? '可以打卡' : '再完成一点就能打卡'}
+              {todayRecord.checkedIn
+                ? '今日已打卡，明天继续保持'
+                : `今日完成 ${todaySignals.tasks} 个课时任务 · ${todaySignals.practices} 次练习，${todaySignals.ready ? '可以打卡' : '完成 1 个课时任务 + 1 次练习即可打卡'}`}
             </p>
           </div>
           <button
             onClick={onCheckInToday}
-            disabled={!todayCheckin.ready || todayRecord.checkedIn}
+            disabled={!todaySignals.ready || todayRecord.checkedIn}
             className={cn(
               "px-5 py-3 rounded-2xl font-bold",
               todayRecord.checkedIn
                 ? "bg-emerald-100 text-emerald-700"
-                : todayCheckin.ready
+                : todaySignals.ready
                   ? "bg-emerald-500 text-white"
                   : "bg-slate-100 text-slate-400"
             )}
@@ -2057,9 +2076,12 @@ const Dashboard = ({
           </button>
         </div>
         <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-2">
-          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, Math.round((todayCheckin.progressCount / 3) * 100))}%` }} />
+          <div
+            className="h-full rounded-full bg-emerald-500"
+            style={{ width: `${Math.min(100, Math.round(((todaySignals.tasks > 0 ? 50 : 0) + (todaySignals.practices > 0 ? 50 : 0))))}%` }}
+          />
         </div>
-        <div className="text-xs text-slate-400">建议每日完成 1 个主课时 + 1 个推荐任务 + 1 次闯关/复盘。</div>
+        <div className="text-xs text-slate-400">建议每日完成 1 个主课时 + 1 次真实练习（听写 / 朗读评测 / 闯关 / 错题复练）。</div>
       </div>
 
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
@@ -3544,6 +3566,9 @@ export default function App() {
         completedTaskIds: record.completedTaskIds.includes(taskId)
           ? record.completedTaskIds
           : [...record.completedTaskIds, taskId],
+        recommendationIds: record.recommendationIds.includes(`stage:${stage}`)
+          ? record.recommendationIds
+          : [...record.recommendationIds, `stage:${stage}`],
       })),
       agentEvents: appendAgentEvent(prev.agentEvents, {
         agent: stage === 'speaking' ? 'speakingCoach' : 'orchestrator',
@@ -3813,33 +3838,14 @@ export default function App() {
     return playBrowserTTS(text, accent, rate);
   };
 
-  const handleCompleteRecommendation = (item: RecommendationItem) => {
-    setStudyState((prev) => ({
-      ...prev,
-      currentStage: item.stage,
-      dailyCheckins: updateTodayRecord(prev, (record) => ({
-        ...record,
-        recommendationIds: record.recommendationIds.includes(item.id)
-          ? record.recommendationIds
-          : [...record.recommendationIds, item.id],
-      })),
-      agentEvents: appendAgentEvent(prev.agentEvents, {
-        agent: 'orchestrator',
-        type: 'plan',
-        title: `执行推荐：${item.title}`,
-        detail: item.rationale || item.description,
-        unitId: currentUnit?.id,
-        stage: item.stage,
-      }),
-    }));
-  };
 
   const handleCheckInToday = () => {
-    setStudyState((prev) => ({
+    setStudyState((prev) => {
+      if (!getTodayLearningSignals(prev).ready) return prev;
+      return {
       ...prev,
       dailyCheckins: updateTodayRecord(prev, (record) => {
-        const status = calculateCheckinStatus(record);
-        return status.ready ? { ...record, checkedIn: true } : record;
+        return { ...record, checkedIn: true };
       }),
       agentEvents: appendAgentEvent(prev.agentEvents, {
         agent: 'teacherInsight',
@@ -3848,7 +3854,8 @@ export default function App() {
         detail: '教师洞察 Agent 收到打卡信号，可将今日推进情况纳入班级趋势和风险判断。',
         unitId: currentUnit?.id,
       }),
-    }));
+      };
+    });
   };
 
   const handleOpenChallenge = () => {
@@ -4090,7 +4097,6 @@ export default function App() {
                     onOpenStage={handleOpenStage}
                     onOpenChallenge={handleOpenChallenge}
                     onCheckInToday={handleCheckInToday}
-                    onCompleteRecommendation={handleCompleteRecommendation}
                   />
                 </>
               )}
@@ -4164,19 +4170,22 @@ export default function App() {
                 />
               )}
               {activeTab === 'stats' && (
-                <Statistics
-                  studyState={studyState}
-                  currentUnit={currentUnit}
-                  onRetryMistake={handleRetryMistake}
-                  onResolveMistake={handleResolveMistake}
-                  mistakeReasonLabels={MISTAKE_REASON_LABELS}
-                  getWeaknessSummary={getWeaknessSummary}
-                  buildReviewPack={buildReviewPack}
-                  stageMeta={STAGE_META}
-                  onPracticeWeakWord={(word) => {
-                    void speakWithAzure(word, 'US', 0.9);
-                  }}
-                />
+                <div className="space-y-6">
+                  <Statistics
+                    studyState={studyState}
+                    currentUnit={currentUnit}
+                    onRetryMistake={handleRetryMistake}
+                    onResolveMistake={handleResolveMistake}
+                    mistakeReasonLabels={MISTAKE_REASON_LABELS}
+                    getWeaknessSummary={getWeaknessSummary}
+                    buildReviewPack={buildReviewPack}
+                    stageMeta={STAGE_META}
+                    onPracticeWeakWord={(word) => {
+                      void speakWithAzure(word, 'US', 0.9);
+                    }}
+                  />
+                  <GrowthPanel studyState={studyState} streak={getCheckinStreak(studyState.dailyCheckins)} />
+                </div>
               )}
               {activeTab === 'profile' && (
                 <ProfileModule
