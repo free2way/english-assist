@@ -1,7 +1,7 @@
 import type React from 'react';
 
 export type LessonStageKey = 'preview' | 'reading' | 'dictation' | 'speaking';
-export type TextbookPageKey = 'overview' | 'preview' | 'sentences' | 'grammar' | 'reading-practice';
+export type TextbookPageKey = 'overview' | 'preview' | 'sentences' | 'grammar' | 'reading-practice' | 'practice' | 'challenge';
 export type MistakeCategory = 'vocab' | 'dictation' | 'speaking' | 'grammar';
 export type MistakeReason =
   | 'unknown_vocab'

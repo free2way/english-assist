@@ -226,7 +226,7 @@ export function Statistics({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
           <div>
             <h3 className="font-bold text-slate-800">发音报告</h3>
-            <p className="text-sm text-slate-500 mt-1">展示当前单元最近的 Azure 发音评测结果。</p>
+            <p className="text-sm text-slate-500 mt-1">展示当前单元最近的朗读发音评测结果。</p>
           </div>
           <div className="flex gap-3">
             <StatCard label="评测次数" value={String(pronunciationRecords.length)} colorClass="text-blue-500" />
@@ -281,7 +281,7 @@ export function Statistics({
           </div>
         ) : (
           <div className="rounded-2xl bg-slate-50 border border-slate-100 p-5 text-sm text-slate-500">
-            还没有 Azure 发音评测记录。去教材页的“课文朗读训练”里点一次“开始录音朗读”，这里就会开始累计数据。
+            还没有发音评测记录。去「同步课文 → 课文朗读」里跟读一句，这里就会开始记录你的进步。
           </div>
         )}
       </div>

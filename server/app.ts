@@ -176,8 +176,8 @@ const AI_TUTOR_SYSTEM_PROMPT =
   'You are a friendly English speaking tutor for Chinese middle school students. Keep answers concise, encouraging and useful for oral practice.';
 const AI_COACH_SYSTEM_PROMPT = `${AI_TUTOR_SYSTEM_PROMPT}
 Always answer with STRICT JSON only (no markdown fences, no extra text) in this shape:
-{"reply":"<1-3 short English sentences>","corrections":[{"original":"<the exact problematic phrase from the student>","corrected":"<fixed English>","reason":"<short Chinese reason>"}],"followUp":"<one short English follow-up question>"}
-Rules: at most 2 corrections and only for real grammar / word-choice / tense problems; if the sentence is fine return an empty corrections array; never invent text the student did not write; keep every string short and age-appropriate.`;
+{"reply":"<1-2 short English sentences replying naturally to the student>","replyZh":"<accurate, friendly Chinese translation of reply + followUp>","corrections":[{"original":"<exact problematic phrase from the student>","corrected":"<fixed English>","reason":"<short Chinese reason>"}],"followUp":"<one short English follow-up question>","suggestedReplies":["<short natural English reply option 1 for the student>","<short natural English reply option 2 for the student>"]}
+Rules: at most 2 corrections and only for real grammar / word-choice / tense problems; if the sentence is fine return an empty corrections array; never invent text the student did not write; suggestedReplies must directly answer your followUp question in simple middle-school English (6-12 words each); keep every string short and age-appropriate.`;
 
 const AI_MAX_MESSAGE_LENGTH = 2000;
 
@@ -551,6 +551,14 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
   const wantCorrections = req.body?.corrections === true;
   const context = typeof req.body?.context === 'string' ? req.body.context.slice(0, 800) : '';
   const task = typeof req.body?.task === 'string' ? req.body.task.slice(0, 40) : 'chat';
+  const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+  const history = rawHistory
+    .filter((item: any) => item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string' && item.content.trim())
+    .slice(-10)
+    .map((item: any) => ({
+      role: item.role as 'user' | 'assistant',
+      content: String(item.content).trim().slice(0, 500),
+    }));
 
   const config = await getAIServiceConfig({ includeSecret: true });
   if (!config.apiKey) {
@@ -561,7 +569,7 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
   const systemContent = wantCorrections
     ? task === 'model-answer'
       ? `${AI_COACH_SYSTEM_PROMPT}
-The student asked for a model answer: put the model answer itself in "reply" (2-4 sentences), leave corrections empty.`
+The student asked for a model answer: put the model answer itself in "reply" (2-4 sentences), its Chinese translation in "replyZh", leave corrections empty and suggestedReplies empty.`
       : AI_COACH_SYSTEM_PROMPT
     : AI_TUTOR_SYSTEM_PROMPT;
 
@@ -582,6 +590,7 @@ The student asked for a model answer: put the model answer itself in "reply" (2-
           messages: [
             { role: 'system', content: systemContent },
             ...(context ? [{ role: 'system', content: `Lesson context: ${context}` }] : []),
+            ...history,
             { role: 'user', content: message },
           ],
         }),
@@ -623,10 +632,19 @@ The student asked for a model answer: put the model answer itself in "reply" (2-
       return;
     }
 
+    const suggestedReplies = Array.isArray(parsed.suggestedReplies)
+      ? parsed.suggestedReplies
+          .filter((item: unknown) => typeof item === 'string' && item.trim())
+          .map((item: string) => item.trim().slice(0, 140))
+          .slice(0, 3)
+      : [];
+
     res.json({
       message: typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim() : String(reply),
+      replyZh: typeof parsed.replyZh === 'string' ? parsed.replyZh.trim().slice(0, 500) : '',
       followUp: typeof parsed.followUp === 'string' ? parsed.followUp.trim().slice(0, 300) : '',
       corrections: normalizeCorrections(parsed.corrections),
+      suggestedReplies,
     });
   } catch (error) {
     res.status(502).json({

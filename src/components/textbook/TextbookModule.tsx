@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BookOpen, GraduationCap, MessageSquare, Mic2, PencilLine } from 'lucide-react';
+import { BookOpen, Check, Ear, GraduationCap, Mic2, PencilLine, Trophy } from 'lucide-react';
 import {
   buildRecordingQualityWarning,
   monitorMicrophone,
@@ -9,29 +9,30 @@ import {
   stopMediaStream,
 } from '../../lib/azureSpeech';
 import type { MicrophoneMonitor } from '../../lib/azureSpeech';
+import { cn } from '../../lib/utils';
+import { DictationModule } from '../DictationModule';
+import { ListeningModule } from '../ListeningModule';
+import { ChallengeModule } from '../ChallengeModule';
 import { TextbookGrammarPage } from './TextbookGrammarPage';
-import { TextbookOverviewPage } from './TextbookOverviewPage';
 import { TextbookPreviewPage } from './TextbookPreviewPage';
 import { TextbookReadingPracticePage } from './TextbookReadingPracticePage';
-import { TextbookSentencesPage } from './TextbookSentencesPage';
 import {
   createTaskId,
-  getLessonOutcomeLabel,
   getPronunciationHint,
-  getStageLabel,
   normalizeGrammarAnswer,
 } from './helpers';
 import type {
   AzurePronunciationResult,
   GrammarExercise,
+  LessonStageKey,
+  MistakeReason,
   MistakeRecord,
   PronunciationAssessmentRecord,
   StudyState,
-  TextbookPageKey,
   UnitBundle,
   VocabItem,
-  LessonStageKey,
 } from './types';
+import type { ChallengeQuestionInput } from '../../lib/study';
 
 interface SpeechTokenResponse {
   token: string;
@@ -39,54 +40,78 @@ interface SpeechTokenResponse {
   expiresInSeconds: number;
 }
 
+export type StudySectionKey = 'preview' | 'reading' | 'grammar' | 'practice' | 'challenge';
+
 interface Props {
-  units: UnitBundle[];
   currentUnit: UnitBundle | null;
   studyState: StudyState;
-  onSelectUnit: (unitId: string) => void;
+  activeSection: StudySectionKey;
+  onChangeSection: (section: StudySectionKey) => void;
+  practiceSubMode: 'dictation' | 'listening';
+  onChangePracticeSubMode: (mode: 'dictation' | 'listening') => void;
   onSelectStage: (stage: LessonStageKey) => void;
-  onOpenStage: (stage: LessonStageKey) => void;
+  onOpenDashboard: () => void;
   onMarkWord: (wordId: string, mastered: boolean, word: VocabItem) => void;
-  onToggleSentenceFollowed: (sentenceId: string) => void;
+  onMarkSentenceFollowed: (sentenceId: string, followed?: boolean) => void;
   onCompleteStage: (stage: LessonStageKey) => void;
   onCompleteGrammarExercise: (exerciseId: string) => void;
   onAddPronunciationAssessment: (record: Omit<PronunciationAssessmentRecord, 'id' | 'createdAt'>) => void;
   onAddMistake: (record: Omit<MistakeRecord, 'id' | 'createdAt'>) => void;
-  lockedPage?: TextbookPageKey;
-  playWordAudio: (text: string, accent?: 'US' | 'UK') => Promise<unknown> | unknown;
+  onResolveMistake: (mistake: MistakeRecord) => void;
+  onRecordAttempt: (attempt: { mode: 'word' | 'sentence' | 'listening'; correct: number; total: number }) => void;
+  onSubmitChallenge: (payload: {
+    score: number;
+    total: number;
+    details: Array<{ id: string; kind: string; prompt: string; answer: string; expected: string; correct: boolean }>;
+  }) => void;
+  scoreChallengeAnswer: (
+    question: ChallengeQuestionInput,
+    answer: string,
+    unit: UnitBundle | null,
+  ) => { correct: boolean; detail: string };
+  buildChallengeQuestions: (unit: UnitBundle | null) => ChallengeQuestionInput[];
+  getUnitChallengeStatus: (unit: UnitBundle | null, studyState: StudyState) => { ready: boolean; score: number; progress: number; challengeLabel: string };
+  getChallengeHistoryForUnit: (studyState: StudyState, unitId: string) => Array<{ score: number; total: number }>;
+  classifyDictationIssue: (input: string, target: string) => { reason: MistakeReason; hint: string };
+  mistakeReasonLabels: Record<MistakeReason, string>;
+  retryTarget: MistakeRecord | null;
+  onRetryTargetHandled: () => void;
+  speak: (text: string, accent?: 'US' | 'UK', rate?: number) => Promise<boolean>;
+  onVoiceInput?: () => Promise<string>;
   fetchSpeechToken: () => Promise<SpeechTokenResponse>;
 }
 
 export function TextbookModule({
-  units,
   currentUnit,
   studyState,
-  onSelectUnit,
+  activeSection,
+  onChangeSection,
+  practiceSubMode,
+  onChangePracticeSubMode,
   onSelectStage,
-  onOpenStage,
+  onOpenDashboard,
   onMarkWord,
-  onToggleSentenceFollowed,
+  onMarkSentenceFollowed,
   onCompleteStage,
   onCompleteGrammarExercise,
   onAddPronunciationAssessment,
   onAddMistake,
-  lockedPage,
-  playWordAudio,
+  onResolveMistake,
+  onRecordAttempt,
+  onSubmitChallenge,
+  scoreChallengeAnswer,
+  buildChallengeQuestions,
+  getUnitChallengeStatus,
+  getChallengeHistoryForUnit,
+  classifyDictationIssue,
+  mistakeReasonLabels,
+  retryTarget,
+  onRetryTargetHandled,
+  speak,
+  onVoiceInput,
   fetchSpeechToken,
 }: Props) {
-  if (!currentUnit) {
-    return (
-      <div className="py-20 text-center text-slate-300">
-        <BookOpen size={48} className="mx-auto mb-4 opacity-20" />
-        <p>当前账号暂无教材数据</p>
-      </div>
-    );
-  }
-
-  const masteredCount = currentUnit.vocab.filter((word) => studyState.masteredWordIds.includes(word.id)).length;
-  const followedCount = currentUnit.sentences.filter((sentence) => studyState.followedSentenceIds.includes(sentence.id)).length;
   const [readingIndex, setReadingIndex] = useState(0);
-  const [activePage, setActivePage] = useState<TextbookPageKey>('overview');
   const [recordingPhase, setRecordingPhase] = useState<'idle' | 'preparing' | 'listening' | 'scoring'>('idle');
   const [interimSentenceText, setInterimSentenceText] = useState('');
   const [readingMode, setReadingMode] = useState<'sentence' | 'passage'>('sentence');
@@ -106,32 +131,22 @@ export function TextbookModule({
   const [azureAssessmentError, setAzureAssessmentError] = useState('');
   const [grammarDrafts, setGrammarDrafts] = useState<Record<string, string>>({});
   const [grammarFeedback, setGrammarFeedback] = useState<Record<string, string>>({});
-  const [pendingSentenceAssessmentIndex, setPendingSentenceAssessmentIndex] = useState<number | null>(null);
+
   const pronunciationSessionRef = useRef<Awaited<ReturnType<typeof startPronunciationAssessmentSession>> | null>(null);
   const recordingRunRef = useRef(0);
   const microphoneMonitorRef = useRef<MicrophoneMonitor | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const safeReadingIndex = currentUnit.sentences.length > 0
-    ? Math.min(Math.max(readingIndex, 0), currentUnit.sentences.length - 1)
+
+  const unitSentences = currentUnit?.sentences ?? [];
+  const safeReadingIndex = unitSentences.length > 0
+    ? Math.min(Math.max(readingIndex, 0), unitSentences.length - 1)
     : 0;
-  const currentReadingSentence = currentUnit.sentences[safeReadingIndex];
-  const previewCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'preview'));
-  const readingCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'reading'));
-  const completedGrammarCount = currentUnit.grammar.exercises.filter((exercise) => studyState.completedGrammarQuestionIds.includes(exercise.id)).length;
-  const grammarCompleted = completedGrammarCount === currentUnit.grammar.exercises.length;
-  const textbookPages: Array<{ id: TextbookPageKey; label: string; description: string; icon: React.ElementType }> = [
-    { id: 'overview', label: '单元总览', description: '课时导航和教材内容', icon: BookOpen },
-    { id: 'preview', label: '词汇预习', description: '核心词汇与预习反馈', icon: GraduationCap },
-    { id: 'sentences', label: '重点句', description: '重点句跟读与句型', icon: MessageSquare },
-    { id: 'grammar', label: '语法模块', description: '语法讲解与练习题', icon: PencilLine },
-    { id: 'reading-practice', label: '朗读评测', description: '录音、对比和 Azure 评测', icon: Mic2 },
-  ];
+  const currentReadingSentence = unitSentences[safeReadingIndex];
 
   useEffect(() => {
     setReadingIndex(0);
-    setActivePage(lockedPage || 'overview');
     setRecordedSentenceUrl('');
     setRecognizedSentenceText('');
     setPronunciationScore(null);
@@ -140,25 +155,47 @@ export function TextbookModule({
     setAzureAssessmentError('');
     setGrammarDrafts({});
     setGrammarFeedback({});
-    setPendingSentenceAssessmentIndex(null);
     setReadingMode('sentence');
     setPassagePhase('idle');
     setPassageAssessment(null);
     setPassageRecognizedText('');
     setPassageInterimText('');
     setPassageError('');
-  }, [currentUnit.id, lockedPage]);
+  }, [currentUnit?.id]);
 
+  // Jump straight to matching sentence when retrying a pronunciation mistake
   useEffect(() => {
-    if (lockedPage) {
-      setActivePage(lockedPage);
+    if (!currentUnit || !retryTarget || activeSection !== 'reading') return;
+    const norm = (value: string) => value.trim().toLowerCase();
+    const idx = currentUnit.sentences.findIndex(
+      (s) => norm(s.text) === norm(retryTarget.expected) || norm(s.text) === norm(retryTarget.prompt),
+    );
+    if (idx >= 0) {
+      setReadingMode('sentence');
+      setReadingIndex(idx);
     }
-  }, [lockedPage]);
+  }, [retryTarget, activeSection, currentUnit]);
 
   useEffect(() => {
     if (readingIndex === safeReadingIndex) return;
     setReadingIndex(safeReadingIndex);
   }, [readingIndex, safeReadingIndex]);
+
+  const releaseRecordingResources = () => {
+    microphoneMonitorRef.current?.stop();
+    microphoneMonitorRef.current = null;
+    setRecordingLevel(0);
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {
+      // recorder already closed
+    }
+    mediaRecorderRef.current = null;
+    stopMediaStream(mediaStreamRef.current);
+    mediaStreamRef.current = null;
+  };
 
   useEffect(() => {
     recordingRunRef.current += 1;
@@ -176,28 +213,20 @@ export function TextbookModule({
       URL.revokeObjectURL(recordedSentenceUrl);
       setRecordedSentenceUrl('');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readingIndex]);
-
-  useEffect(() => {
-    if (!currentReadingSentence || pronunciationScore === null || pronunciationScore >= 70) return;
-    onAddMistake({
-      unitId: currentUnit.id,
-      category: 'speaking',
-      stage: 'reading',
-      prompt: currentReadingSentence.text,
-      expected: currentReadingSentence.text,
-      answer: recognizedSentenceText || '录音完成但识别较弱',
-      translation: currentReadingSentence.translation,
-      reason: 'pronunciation',
-      hint: getPronunciationHint(pronunciationScore),
-    });
-  }, [currentReadingSentence, pronunciationScore, recognizedSentenceText, onAddMistake, currentUnit.id, getPronunciationHint]);
 
   useEffect(() => {
     return () => {
       recordingRunRef.current += 1;
       pronunciationSessionRef.current?.cancel();
-      mediaRecorderRef.current?.stop?.();
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {
+        // ignore
+      }
       stopMediaStream(mediaStreamRef.current);
       mediaStreamRef.current = null;
       if (recordedSentenceUrl) {
@@ -206,28 +235,28 @@ export function TextbookModule({
     };
   }, [recordedSentenceUrl]);
 
-  // Warm up the SDK bundle and the Azure token while the student is still on the
-  // page, so pressing "开始录音" does not pay for both.
   useEffect(() => {
     preloadSpeechEngine(fetchSpeechToken);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const releaseRecordingResources = () => {
-    microphoneMonitorRef.current?.stop();
-    microphoneMonitorRef.current = null;
-    setRecordingLevel(0);
-    try {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-    } catch {
-      // recorder already closed
-    }
-    mediaRecorderRef.current = null;
-    stopMediaStream(mediaStreamRef.current);
-    mediaStreamRef.current = null;
-  };
+  if (!currentUnit) {
+    return (
+      <div className="py-20 text-center text-slate-400">
+        <BookOpen size={48} className="mx-auto mb-4 opacity-30" />
+        <p>当前账号暂无教材数据</p>
+      </div>
+    );
+  }
+
+  const masteredCount = currentUnit.vocab.filter((word) => studyState.masteredWordIds.includes(word.id)).length;
+  const followedCount = currentUnit.sentences.filter((sentence) => studyState.followedSentenceIds.includes(sentence.id)).length;
+  const previewCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'preview'));
+  const readingCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'reading'));
+  const dictationCompleted = studyState.completedTaskIds.includes(createTaskId(currentUnit.id, 'dictation'));
+  const completedGrammarCount = currentUnit.grammar.exercises.filter((exercise) => studyState.completedGrammarQuestionIds.includes(exercise.id)).length;
+  const grammarCompleted = currentUnit.grammar.exercises.length > 0 && completedGrammarCount === currentUnit.grammar.exercises.length;
+  const hasChallengeDone = getChallengeHistoryForUnit(studyState, currentUnit.id).length > 0;
 
   const startRecordingAssessment = async (sentence: NonNullable<typeof currentReadingSentence>) => {
     setAzureAssessment(null);
@@ -247,8 +276,6 @@ export function TextbookModule({
     recordingRunRef.current = runId;
 
     try {
-      // One microphone stream shared by the MediaRecorder (playback) and Azure
-      // (assessment): what the student hears back is exactly what was scored.
       const stream = await openMicrophoneStream();
       if (recordingRunRef.current !== runId) {
         stopMediaStream(stream);
@@ -277,7 +304,6 @@ export function TextbookModule({
         onInterim: (text) => setInterimSentenceText(text),
       });
       if (recordingRunRef.current !== runId) {
-        // The student switched sentences (or left the page) while connecting.
         session.cancel();
         stopMediaStream(stream);
         return;
@@ -289,7 +315,7 @@ export function TextbookModule({
       setRecordingPhase('listening');
     } catch (error) {
       if (recordingRunRef.current !== runId) return;
-      const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
+      const message = error instanceof Error ? error.message : '发音评测暂时不可用，请检查麦克风后重试';
       setAzureAssessmentError(message);
       setRecordingError(message);
       pronunciationSessionRef.current?.cancel();
@@ -307,18 +333,15 @@ export function TextbookModule({
     }
 
     setRecordingPhase('scoring');
-    // Collect input-quality stats before tearing the capture down: quiet /
-    // distant microphones are the usual cause of "分数很低" in the field.
     const microphoneStats = microphoneMonitorRef.current?.stop();
     microphoneMonitorRef.current = null;
     setRecordingQualityWarning(microphoneStats ? buildRecordingQualityWarning(microphoneStats) : '');
-    // Stop the recorder immediately so the playback ends where the student stopped.
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
     } catch {
-      // recorder already closed
+      // ignore
     }
 
     try {
@@ -342,6 +365,15 @@ export function TextbookModule({
           weakWords,
         });
 
+        // High score automatically marks sentence followed & clears matching mistake!
+        if (assessment.pronunciationScore >= 75) {
+          onMarkSentenceFollowed(sentence.id, true);
+          if (retryTarget && retryTarget.expected.trim().toLowerCase() === sentence.text.trim().toLowerCase()) {
+            onResolveMistake(retryTarget);
+            onRetryTargetHandled();
+          }
+        }
+
         if (assessment.pronunciationScore < 75 || weakWords.length > 0) {
           onAddMistake({
             unitId: currentUnit.id,
@@ -349,7 +381,7 @@ export function TextbookModule({
             stage: 'reading',
             prompt: sentence.text,
             expected: sentence.text,
-            answer: weakWords.join(', ') || recognizedText || 'Azure 评测分数偏低',
+            answer: weakWords.join(', ') || recognizedText || '发音分数偏低',
             translation: sentence.translation,
             reason: 'pronunciation',
             hint: assessment.feedback[1] || assessment.feedback[0],
@@ -357,7 +389,7 @@ export function TextbookModule({
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
+      const message = error instanceof Error ? error.message : '发音评测失败，请重试';
       setAzureAssessmentError(message);
       setRecordingError(message);
     } finally {
@@ -408,7 +440,7 @@ export function TextbookModule({
       setPassagePhase('listening');
     } catch (error) {
       if (recordingRunRef.current !== runId) return;
-      const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
+      const message = error instanceof Error ? error.message : '发音评测失败，请检查麦克风后重试';
       setPassageError(message);
       pronunciationSessionRef.current?.cancel();
       pronunciationSessionRef.current = null;
@@ -424,8 +456,7 @@ export function TextbookModule({
       return;
     }
     setPassagePhase('scoring');
-    const monitor = microphoneMonitorRef.current;
-    monitor?.stop();
+    microphoneMonitorRef.current?.stop();
     microphoneMonitorRef.current = null;
     setPassageLevel(0);
 
@@ -449,6 +480,10 @@ export function TextbookModule({
         weakWords,
       });
 
+      if (assessment.pronunciationScore >= 70) {
+        onCompleteStage('reading');
+      }
+
       if (assessment.pronunciationScore < 75 || weakWords.length > 0) {
         onAddMistake({
           unitId: currentUnit.id,
@@ -460,12 +495,12 @@ export function TextbookModule({
           translation: firstSentence?.translation,
           reason: 'pronunciation',
           hint: missingWords > 0
-            ? `有 ${missingWords} 个词没读到，先按意群逐句练，再整篇连读。`
+            ? `有 ${missingWords} 个词没读到，先切回逐句精练，再整篇连读。`
             : (assessment.feedback[1] || assessment.feedback[0]),
         });
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Azure 发音评测失败';
+      const message = error instanceof Error ? error.message : '发音评测失败，请重试';
       setPassageError(message);
     } finally {
       pronunciationSessionRef.current = null;
@@ -484,51 +519,32 @@ export function TextbookModule({
     void startPassageRecording();
   };
 
-  const handleAzurePronunciationAssessment = (sentenceOverride?: typeof currentReadingSentence) => {
-    const sentence = sentenceOverride || currentReadingSentence;
-    if (!sentence) return;
-
+  const handleToggleRecording = () => {
+    if (!currentReadingSentence) return;
     if (recordingPhase === 'listening') {
       void stopRecordingAssessment();
       return;
     }
     if (recordingPhase !== 'idle') return;
-    void startRecordingAssessment(sentence);
+    void startRecordingAssessment(currentReadingSentence);
   };
-
-  const handleStartSentenceMicPractice = (index: number) => {
-    if (!currentUnit.sentences[index]) return;
-    setReadingIndex(index);
-    setActivePage('reading-practice');
-    setPendingSentenceAssessmentIndex(index);
-  };
-
-  useEffect(() => {
-    if (pendingSentenceAssessmentIndex === null) return;
-    if (activePage !== 'reading-practice') return;
-    if (readingIndex !== pendingSentenceAssessmentIndex) return;
-
-    const sentence = currentUnit.sentences[pendingSentenceAssessmentIndex];
-    setPendingSentenceAssessmentIndex(null);
-    if (!sentence) return;
-    if (recordingPhase !== 'idle' || pronunciationSessionRef.current) return;
-
-    void startRecordingAssessment(sentence);
-  }, [activePage, currentUnit.sentences, pendingSentenceAssessmentIndex, readingIndex, recordingPhase]);
 
   const handleGrammarChoice = (exercise: GrammarExercise, option: string) => {
     if (normalizeGrammarAnswer(option) === normalizeGrammarAnswer(exercise.answer)) {
       onCompleteGrammarExercise(exercise.id);
       setGrammarFeedback((prev) => ({
         ...prev,
-        [exercise.id]: `回答正确：${exercise.explanation}`,
+        [exercise.id]: `回答正确！${exercise.explanation}`,
       }));
+      if (retryTarget && retryTarget.prompt.includes(exercise.question)) {
+        onRetryTargetHandled();
+      }
       return;
     }
 
     setGrammarFeedback((prev) => ({
       ...prev,
-      [exercise.id]: `还不对：${exercise.explanation}`,
+      [exercise.id]: `再想想：${exercise.explanation}`,
     }));
 
     onAddMistake({
@@ -557,14 +573,17 @@ export function TextbookModule({
       onCompleteGrammarExercise(exercise.id);
       setGrammarFeedback((prev) => ({
         ...prev,
-        [exercise.id]: `回答正确：${exercise.explanation}`,
+        [exercise.id]: `回答正确！${exercise.explanation}`,
       }));
+      if (retryTarget && retryTarget.prompt.includes(exercise.question)) {
+        onRetryTargetHandled();
+      }
       return;
     }
 
     setGrammarFeedback((prev) => ({
       ...prev,
-      [exercise.id]: `还不对：${exercise.explanation}`,
+      [exercise.id]: `还差一点：${exercise.explanation}`,
     }));
 
     onAddMistake({
@@ -579,23 +598,12 @@ export function TextbookModule({
     });
   };
 
-  const handlePageSelect = (page: TextbookPageKey, stage?: LessonStageKey) => {
-    setActivePage(page);
-    if (stage) {
-      onSelectStage(stage);
-    }
-  };
-
-  const handleSelectReadingSentence = (index: number) => {
-    if (!currentUnit.sentences[index]) return;
-    setReadingIndex(index);
-  };
-
   const handleCompleteCurrentSentence = () => {
     const sentence = currentUnit.sentences[safeReadingIndex];
     if (!sentence) return;
 
-    onToggleSentenceFollowed(sentence.id);
+    // Idempotent mark followed — never accidentally unchecks a completed sentence!
+    onMarkSentenceFollowed(sentence.id, true);
 
     if (safeReadingIndex < currentUnit.sentences.length - 1) {
       setReadingIndex(safeReadingIndex + 1);
@@ -605,72 +613,96 @@ export function TextbookModule({
     onCompleteStage('reading');
   };
 
+  const steps: Array<{
+    id: StudySectionKey;
+    label: string;
+    badge: string;
+    done: boolean;
+    icon: React.ElementType;
+  }> = [
+    {
+      id: 'preview',
+      label: '1. 记单词',
+      badge: `${masteredCount}/${currentUnit.vocab.length}`,
+      done: previewCompleted,
+      icon: GraduationCap,
+    },
+    {
+      id: 'reading',
+      label: '2. 课文朗读',
+      badge: `${followedCount}/${currentUnit.sentences.length}`,
+      done: readingCompleted,
+      icon: Mic2,
+    },
+    {
+      id: 'grammar',
+      label: '3. 练语法',
+      badge: `${completedGrammarCount}/${currentUnit.grammar.exercises.length}`,
+      done: grammarCompleted,
+      icon: PencilLine,
+    },
+    {
+      id: 'practice',
+      label: '4. 听与写',
+      badge: dictationCompleted ? '已完成' : '听力/听写',
+      done: dictationCompleted,
+      icon: Ear,
+    },
+    {
+      id: 'challenge',
+      label: '5. 单元闯关',
+      badge: hasChallengeDone ? '已测' : '5题',
+      done: hasChallengeDone,
+      icon: Trophy,
+    },
+  ];
+
   return (
-    <div className="space-y-6 pb-20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">教材同步路径</h2>
-          <p className="text-sm text-slate-500">
-            {currentUnit.grade} {currentUnit.semester} · {currentUnit.unit} · {currentUnit.title}
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-blue-600">
-            已掌握单词 {masteredCount}/{currentUnit.vocab.length}
-          </div>
-          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-purple-600">
-            已跟读句子 {followedCount}/{currentUnit.sentences.length}
-          </div>
-          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 text-xs font-bold text-violet-600">
-            语法练习 {completedGrammarCount}/{currentUnit.grammar.exercises.length}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-slate-800">选择单元</h3>
-          <span className="text-xs text-slate-400">按课时推进学习</span>
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-          {units.map((unit) => (
-            <button
-              key={unit.id}
-              onClick={() => onSelectUnit(unit.id)}
-              className={`px-4 py-3 rounded-2xl border text-left min-w-[180px] transition-all ${
-                currentUnit.id === unit.id ? 'border-blue-200 bg-blue-50' : 'border-slate-100 bg-slate-50 hover:border-slate-200'
-              }`}
-            >
-              <div className="text-xs text-slate-400">{unit.unit}</div>
-              <div className="font-bold text-slate-800">{unit.title}</div>
-            </button>
-          ))}
+    <div className="space-y-5 pb-16">
+      {/* Compact 5-step unit workflow bar */}
+      <div className="bg-white rounded-3xl p-3 shadow-sm border border-slate-100">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {steps.map((step) => {
+            const active = activeSection === step.id;
+            return (
+              <button
+                key={step.id}
+                onClick={() => onChangeSection(step.id)}
+                className={cn(
+                  'rounded-2xl px-3.5 py-2.5 text-left transition-all border flex items-center justify-between gap-2',
+                  active
+                    ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
+                    : step.done
+                      ? 'bg-emerald-50/70 text-emerald-800 border-emerald-200 hover:bg-emerald-50'
+                      : 'bg-slate-50 text-slate-600 border-slate-100 hover:border-slate-200 hover:bg-white',
+                )}
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-bold truncate flex items-center gap-1.5">
+                    <step.icon size={14} className="shrink-0" />
+                    <span>{step.label}</span>
+                  </div>
+                  <div className={cn('text-[10px] mt-0.5 truncate', active ? 'text-blue-100' : 'text-slate-400')}>
+                    {step.badge}
+                  </div>
+                </div>
+                {step.done && !active && <Check size={14} className="text-emerald-500 shrink-0" />}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {activePage === 'overview' && (
-        <TextbookOverviewPage
-          currentUnit={currentUnit}
-          studyState={studyState}
-          textbookPages={textbookPages}
-          lockedPage={lockedPage}
-          activePage={activePage}
-          createTaskId={createTaskId}
-          getStageLabel={getStageLabel}
-          getLessonOutcomeLabel={getLessonOutcomeLabel}
-          onSetActivePage={setActivePage}
-          onStageCardClick={(stage) => handlePageSelect(stage === 'preview' ? 'preview' : stage === 'reading' ? 'sentences' : 'overview', stage)}
-          onOpenStage={onOpenStage}
-        />
-      )}
-
-      {activePage === 'preview' && (
+      {/* Step 1: Vocabulary */}
+      {activeSection === 'preview' && (
         <TextbookPreviewPage
           currentUnit={currentUnit}
           studyState={studyState}
           previewCompleted={previewCompleted}
           onSelectStage={() => onSelectStage('preview')}
-          onPlayWord={(word) => playWordAudio(word, 'US')}
+          onPlayWord={(word, rate = 1) => {
+            void speak(word, 'US', rate);
+          }}
           onMarkWord={onMarkWord}
           onMarkUnknown={(word) => {
             onMarkWord(word.id, false, word);
@@ -682,58 +714,27 @@ export function TextbookModule({
               expected: word.definition,
               answer: '未掌握',
               reason: 'unknown_vocab',
-              hint: '建议先听发音，再结合例句确认词义和用法。',
+              hint: '先听发音，再结合例句记住词义和用法。',
             });
           }}
           onCompleteAndGoSentences={() => {
             onCompleteStage('preview');
-            handlePageSelect('sentences', 'reading');
+            onSelectStage('reading');
+            onChangeSection('reading');
           }}
+          retryTarget={retryTarget && retryTarget.category === 'vocab' ? retryTarget : null}
+          onRetryTargetHandled={onRetryTargetHandled}
+          onResolveMistake={onResolveMistake}
         />
       )}
 
-      {activePage === 'sentences' && (
-        <TextbookSentencesPage
-          currentUnit={currentUnit}
-          studyState={studyState}
-          readingCompleted={readingCompleted}
-          onSelectStage={() => onSelectStage('reading')}
-          onPlaySentence={(text) => playWordAudio(text, 'US')}
-          onMicPracticeSentence={(_, index) => handleStartSentenceMicPractice(index)}
-          onToggleSentenceFollowed={onToggleSentenceFollowed}
-          onNeedCorrection={(_, index) => handleStartSentenceMicPractice(index)}
-          onCompleteAndOpenDictation={() => {
-            onCompleteStage('reading');
-            onOpenStage('dictation');
-          }}
-        />
-      )}
-
-      {activePage === 'grammar' && (
-        <TextbookGrammarPage
-          currentUnit={currentUnit}
-          studyState={studyState}
-          completedGrammarCount={completedGrammarCount}
-          grammarCompleted={grammarCompleted}
-          grammarDrafts={grammarDrafts}
-          grammarFeedback={grammarFeedback}
-          onDraftChange={(exerciseId, value) =>
-            setGrammarDrafts((prev) => ({
-              ...prev,
-              [exerciseId]: value,
-            }))
-          }
-          onChoiceAnswer={handleGrammarChoice}
-          onFillAnswer={handleGrammarFill}
-        />
-      )}
-
-      {activePage === 'reading-practice' && (
+      {/* Step 2: Reading & Pronunciation (merged Sentences + Reading Practice) */}
+      {activeSection === 'reading' && (
         <TextbookReadingPracticePage
           currentUnit={currentUnit}
           studyState={studyState}
           currentReadingSentence={currentReadingSentence}
-          readingIndex={readingIndex}
+          readingIndex={safeReadingIndex}
           recordingPhase={recordingPhase}
           interimSentenceText={interimSentenceText}
           readingMode={readingMode}
@@ -756,10 +757,110 @@ export function TextbookModule({
           azureAssessmentError={azureAssessmentError}
           getPronunciationHint={getPronunciationHint}
           onSelectStage={() => onSelectStage('reading')}
-          onPlaySentence={(text) => playWordAudio(text, 'US')}
-          onToggleRecording={() => handleAzurePronunciationAssessment()}
+          onPlaySentence={(text, rate = 1) => {
+            void speak(text, 'US', rate);
+          }}
+          onToggleRecording={handleToggleRecording}
           onCompleteCurrentSentence={handleCompleteCurrentSentence}
-          onSelectReadingSentence={handleSelectReadingSentence}
+          onSelectReadingSentence={(index) => {
+            if (currentUnit.sentences[index]) setReadingIndex(index);
+          }}
+          onFinishReadingGoNext={() => {
+            onCompleteStage('reading');
+            onChangeSection('grammar');
+          }}
+          retryTarget={retryTarget && retryTarget.category === 'speaking' ? retryTarget : null}
+          onRetryTargetHandled={onRetryTargetHandled}
+        />
+      )}
+
+      {/* Step 3: Grammar */}
+      {activeSection === 'grammar' && (
+        <TextbookGrammarPage
+          currentUnit={currentUnit}
+          studyState={studyState}
+          completedGrammarCount={completedGrammarCount}
+          grammarCompleted={grammarCompleted}
+          grammarDrafts={grammarDrafts}
+          grammarFeedback={grammarFeedback}
+          onDraftChange={(exerciseId, value) =>
+            setGrammarDrafts((prev) => ({
+              ...prev,
+              [exerciseId]: value,
+            }))
+          }
+          onChoiceAnswer={handleGrammarChoice}
+          onFillAnswer={handleGrammarFill}
+          onPlayExample={(text) => {
+            void speak(text, 'US', 0.95);
+          }}
+          retryTarget={retryTarget && retryTarget.category === 'grammar' ? retryTarget : null}
+          onRetryTargetHandled={onRetryTargetHandled}
+        />
+      )}
+
+      {/* Step 4: Unified Listening & Dictation */}
+      {activeSection === 'practice' && (
+        <div className="space-y-4">
+          <div className="inline-flex bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm">
+            <button
+              onClick={() => onChangePracticeSubMode('dictation')}
+              className={cn(
+                'px-5 py-2 rounded-xl text-sm font-bold transition-all',
+                practiceSubMode === 'dictation' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800',
+              )}
+            >
+              拼写听写
+            </button>
+            <button
+              onClick={() => onChangePracticeSubMode('listening')}
+              className={cn(
+                'px-5 py-2 rounded-xl text-sm font-bold transition-all',
+                practiceSubMode === 'listening' ? 'bg-sky-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800',
+              )}
+            >
+              听力专项（选词/填空/选义）
+            </button>
+          </div>
+
+          {practiceSubMode === 'dictation' ? (
+            <DictationModule
+              currentUnit={currentUnit}
+              onCompleteStage={onCompleteStage}
+              onAddMistake={onAddMistake}
+              speak={speak}
+              onRecordAttempt={onRecordAttempt}
+              retryTarget={retryTarget && retryTarget.category === 'dictation' ? retryTarget : null}
+              onRetryTargetHandled={onRetryTargetHandled}
+              onResolveMistake={onResolveMistake}
+              classifyDictationIssue={classifyDictationIssue}
+              mistakeReasonLabels={mistakeReasonLabels}
+            />
+          ) : (
+            <ListeningModule
+              currentUnit={currentUnit}
+              speak={speak}
+              onAddMistake={onAddMistake}
+              onRecordAttempt={onRecordAttempt}
+              mistakeReasonLabels={mistakeReasonLabels}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Step 5: Unit Challenge */}
+      {activeSection === 'challenge' && (
+        <ChallengeModule
+          currentUnit={currentUnit}
+          studyState={studyState}
+          onBack={onOpenDashboard}
+          onSubmitResult={onSubmitChallenge}
+          scoreChallengeAnswer={scoreChallengeAnswer}
+          buildChallengeQuestions={buildChallengeQuestions}
+          getUnitChallengeStatus={getUnitChallengeStatus}
+          getChallengeHistoryForUnit={getChallengeHistoryForUnit}
+          speak={speak}
+          onVoiceInput={onVoiceInput}
         />
       )}
     </div>
